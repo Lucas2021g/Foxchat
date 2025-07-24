@@ -390,6 +390,10 @@ app.get('/api/messages/:friendId', authenticateToken, async (req, res) => { // <
     }
 });
 
+// Aggiungi questa rotta di test nel tuo server.js
+app.get('/api/test', (req, res) => {
+    res.json({ message: 'Hello from FoxChat API on Render!' });
+});
 
 // --- Socket.IO ---
 const userSockets = new Map(); // Map userId to socket.id

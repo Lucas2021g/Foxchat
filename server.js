@@ -108,7 +108,7 @@ mongoose.connect(process.env.MONGODB_URI, {
 // --- Routes ---
 
 // Register
-app.post('/register', async (req, res) => {
+app.post('/api/register', async (req, res) => { // <-- MODIFICATO QUI
     const { username, email, password } = req.body;
     try {
         const hashedPassword = await bcrypt.hash(password, 10);
@@ -124,7 +124,7 @@ app.post('/register', async (req, res) => {
 });
 
 // Login
-app.post('/login', async (req, res) => {
+app.post('/api/login', async (req, res) => { // <-- MODIFICATO QUI
     const { username, password } = req.body;
     try {
         const user = await User.findOne({ username });
@@ -143,7 +143,7 @@ app.post('/login', async (req, res) => {
 });
 
 // Get user info (for friend search or self info)
-app.get('/user/:username', authenticateToken, async (req, res) => {
+app.get('/api/user/:username', authenticateToken, async (req, res) => { // <-- MODIFICATO QUI
     try {
         const user = await User.findOne({ username: req.params.username }).select('-password');
         if (!user) {
@@ -156,7 +156,7 @@ app.get('/user/:username', authenticateToken, async (req, res) => {
 });
 
 // Get user's friend list and pending requests
-app.get('/friends', authenticateToken, async (req, res) => {
+app.get('/api/friends', authenticateToken, async (req, res) => { // <-- MODIFICATO QUI
     try {
         const user = await User.findById(req.user.id)
             .populate('friends', 'username') // Only populate username
@@ -181,7 +181,7 @@ app.get('/friends', authenticateToken, async (req, res) => {
 
 
 // Send friend request
-app.post('/friend-request/:recipientUsername', authenticateToken, async (req, res) => {
+app.post('/api/friend-request/:recipientUsername', authenticateToken, async (req, res) => { // <-- MODIFICATO QUI
     try {
         const sender = await User.findById(req.user.id);
         const recipient = await User.findOne({ username: req.params.recipientUsername });
@@ -240,7 +240,7 @@ app.post('/friend-request/:recipientUsername', authenticateToken, async (req, re
 });
 
 // Accept friend request
-app.post('/friend-request/:senderUsername/accept', authenticateToken, async (req, res) => {
+app.post('/api/friend-request/:senderUsername/accept', authenticateToken, async (req, res) => { // <-- MODIFICATO QUI
     try {
         const recipient = await User.findById(req.user.id);
         const sender = await User.findOne({ username: req.params.senderUsername });
@@ -275,7 +275,7 @@ app.post('/friend-request/:senderUsername/accept', authenticateToken, async (req
 });
 
 // Decline or Cancel friend request
-app.post('/friend-request/:targetUsername/decline-cancel', authenticateToken, async (req, res) => {
+app.post('/api/friend-request/:targetUsername/decline-cancel', authenticateToken, async (req, res) => { // <-- MODIFICATO QUI
     try {
         const currentUser = await User.findById(req.user.id);
         const targetUser = await User.findOne({ username: req.params.targetUsername });
@@ -317,7 +317,7 @@ app.post('/friend-request/:targetUsername/decline-cancel', authenticateToken, as
 });
 
 // Remove friend
-app.post('/friend/:friendUsername/remove', authenticateToken, async (req, res) => {
+app.post('/api/friend/:friendUsername/remove', authenticateToken, async (req, res) => { // <-- MODIFICATO QUI
     try {
         const currentUser = await User.findById(req.user.id);
         const friendUser = await User.findOne({ username: req.params.friendUsername });
@@ -352,7 +352,7 @@ app.post('/friend/:friendUsername/remove', authenticateToken, async (req, res) =
 
 
 // Get chat history between two users
-app.get('/messages/:friendId', authenticateToken, async (req, res) => {
+app.get('/api/messages/:friendId', authenticateToken, async (req, res) => { // <-- MODIFICATO QUI
     try {
         const currentUserId = req.user.id;
         const friendId = req.params.friendId;
@@ -556,4 +556,3 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-

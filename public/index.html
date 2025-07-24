@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fox Chat - Login/Registrazione</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Benvenuto su Fox Chat</h1>
+        <div class="auth-form">
+            <h2>Registrati</h2>
+            <form id="registerForm">
+                <input type="text" id="regUsername" placeholder="Username" required>
+                <input type="email" id="regEmail" placeholder="Email" required>
+                <input type="password" id="regPassword" placeholder="Password" required>
+                <button type="submit">Registrati</button>
+            </form>
+            <p id="registerMessage" class="message"></p>
+        </div>
+
+        <div class="auth-form">
+            <h2>Accedi</h2>
+            <form id="loginForm">
+                <input type="text" id="loginUsername" placeholder="Username" required>
+                <input type="password" id="loginPassword" placeholder="Password" required>
+                <button type="submit">Accedi</button>
+            </form>
+            <p id="loginMessage" class="message"></p>
+        </div>
+    </div>
+
+    <script>
+        const BACKEND_URL = 'YOUR_RENDER_BACKEND_URL'; // Sostituisci con l'URL del tuo backend Render
+
+        document.getElementById('registerForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('regUsername').value;
+            const email = document.getElementById('regEmail').value;
+            const password = document.getElementById('regPassword').value;
+
+            try {
+                const response = await fetch(`${BACKEND_URL}/api/register`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ username, email, password })
+                });
+                const data = await response.json();
+                document.getElementById('registerMessage').textContent = data.message;
+                if (response.ok) {
+                    document.getElementById('registerMessage').style.color = 'green';
+                    document.getElementById('registerForm').reset();
+                } else {
+                    document.getElementById('registerMessage').style.color = 'red';
+                }
+            } catch (error) {
+                console.error('Errore di rete:', error);
+                document.getElementById('registerMessage').textContent = 'Errore di connessione al server.';
+                document.getElementById('registerMessage').style.color = 'red';
+            }
+        });
+
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('loginUsername').value;
+            const password = document.getElementById('loginPassword').value;
+
+            try {
+                const response = await fetch(`${BACKEND_URL}/api/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await response.json();
+                document.getElementById('loginMessage').textContent = data.message;
+
+                if (response.ok) {
+                    document.getElementById('loginMessage').style.color = 'green';
+                    localStorage.setItem('token', data.token);
+                    localStorage.setItem('username', data.username);
+                    window.location.href = 'chat.html'; // Reindirizza alla pagina di chat
+                } else {
+                    document.getElementById('loginMessage').style.color = 'red';
+                }
+            } catch (error) {
+                console.error('Errore di rete:', error);
+                document.getElementById('loginMessage').textContent = 'Errore di connessione al server.';
+                document.getElementById('loginMessage').style.color = 'red';
+            }
+        });
+    </script>
+</body>
+</html>

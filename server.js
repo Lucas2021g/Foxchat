@@ -9,7 +9,22 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const cors = require('cors');
 const cloudinary = require('cloudinary').v2;
-const { Buffer } = require('buffer'); // Import Buffer for Node.js 16+
+const { Buffer } = require('buffer');
+
+// --- Gestori Globali per Errori Non Catturati ---
+// Questi catturano errori che altrimenti farebbero crashare il tuo server silenziosamente.
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+    // In produzione, potresti voler terminare il processo qui (es. process.exit(1);)
+    // per far ripartire il servizio e pulire lo stato.
+});
+
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught Exception:', err.message, err.stack);
+    // È consigliabile terminare il processo e riavviare per evitare stati inconsistenti.
+    process.exit(1); // Questo farà sì che Render riavvii il servizio
+});
+
 
 // --- Configurazione Cloudinary ---
 cloudinary.config({
@@ -26,8 +41,6 @@ const IMAGE_ENCRYPTION_KEY = Buffer.from(process.env.IMAGE_ENCRYPTION_KEY, 'hex'
 // Controllo per la lunghezza delle chiavi di cifratura (devono essere di 32 byte)
 if (ENCRYPTION_KEY.length !== 32 || IMAGE_ENCRYPTION_KEY.length !== 32) {
     console.error('Encryption keys must be 32 bytes (64 hex characters) long.');
-    // Considera di non uscire dal processo in produzione, ma di loggare un errore critico
-    // e impedire operazioni che usano le chiavi. Per debug, l'uscita è utile.
     process.exit(1);
 }
 
@@ -61,10 +74,7 @@ mongoose.connect(process.env.MONGODB_URI)
     .then(() => console.log('MongoDB connected'))
     .catch(err => console.error('MongoDB connection error:', err));
 
-// --- Schemi e Modelli (assicurati che questi siano corretti) ---
-// Normalmente questi sarebbero in file separati (es. models/User.js, models/Message.js)
-// Li includo qui per comodità, ma se hai i file separati, assicurati che siano aggiornati.
-
+// --- Schemi e Modelli ---
 const userSchema = new mongoose.Schema({
     username: { type: String, required: true, unique: true },
     email: { type: String, required: true, unique: true },
@@ -72,13 +82,13 @@ const userSchema = new mongoose.Schema({
     friends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     friendRequestsSent: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     friendRequestsReceived: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-    profilePicture: { type: String } // URL della foto su Cloudinary
+    profilePicture: { type: String } // URL della foto su Cloudinary (cifrato)
 });
 
 const messageSchema = new mongoose.Schema({
     sender: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     receiver: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    content: { type: String, required: true },
+    content: { type: String, required: true }, // Contenuto cifrato
     timestamp: { type: Date, default: Date.now }
 });
 
@@ -95,7 +105,7 @@ app.use(express.json());
 
 // --- Configurazione CORS ---
 // *** IMPORTANTE: Per il debugging, accetta tutte le origini. ***
-// *** Per la produzione, CAMBIA 'origin: "*"' con l'URL specifico del tuo frontend! ***
+// *** Per la produzione, CAMBIA 'origin: "*"' con l'URL specifico del tuo frontend per sicurezza! ***
 app.use(cors({
     origin: '*', // Accetta richieste da QUALSIASI origine per debugging
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
@@ -135,6 +145,13 @@ const authenticateToken = (req, res, next) => {
 
 // --- ROTTE API ---
 
+// Rotta di test (funzionante)
+app.get('/api/test', (req, res) => {
+    console.log('--> Test route hit');
+    res.json({ message: 'Backend is working correctly!' });
+});
+
+
 // Registrazione Utente
 app.post('/api/register', async (req, res) => {
     console.log('--> Register route hit');
@@ -142,6 +159,7 @@ app.post('/api/register', async (req, res) => {
     console.log('Registering user:', username);
     try {
         const hashedPassword = await bcrypt.hash(password, 10);
+        console.log('Password hashed for:', username);
         const user = new User({ username, email, password: hashedPassword });
         await user.save();
         console.log('User saved successfully:', username);
@@ -191,6 +209,10 @@ app.get('/api/user', authenticateToken, async (req, res) => {
         if (!user) {
             return res.status(404).json({ message: 'User not found' });
         }
+        // Decifra l'URL della foto profilo prima di inviarlo al client
+        if (user.profilePicture) {
+            user.profilePicture = decrypt(user.profilePicture, IMAGE_ENCRYPTION_KEY);
+        }
         res.json(user);
     } catch (err) {
         console.error('Error fetching user data:', err.message);
@@ -205,7 +227,14 @@ app.get('/api/friends', authenticateToken, async (req, res) => {
         if (!user) {
             return res.status(404).json({ message: 'User not found' });
         }
-        res.json(user.friends);
+        // Decifra le foto profilo degli amici
+        const friendsWithDecryptedPics = user.friends.map(friend => {
+            if (friend.profilePicture) {
+                friend.profilePicture = decrypt(friend.profilePicture, IMAGE_ENCRYPTION_KEY);
+            }
+            return friend;
+        });
+        res.json(friendsWithDecryptedPics);
     } catch (err) {
         console.error('Error fetching friends:', err.message);
         res.status(500).json({ message: 'Error fetching friends', error: err.message });
@@ -220,7 +249,16 @@ app.get('/api/users/search', authenticateToken, async (req, res) => {
             username: { $regex: query, $options: 'i' },
             _id: { $ne: req.user.id } // Non includere l'utente corrente
         }).select('username profilePicture');
-        res.json(users);
+
+        // Decifra le foto profilo degli utenti cercati
+        const usersWithDecryptedPics = users.map(user => {
+            if (user.profilePicture) {
+                user.profilePicture = decrypt(user.profilePicture, IMAGE_ENCRYPTION_KEY);
+            }
+            return user;
+        });
+
+        res.json(usersWithDecryptedPics);
     } catch (err) {
         console.error('Error searching users:', err.message);
         res.status(500).json({ message: 'Error searching users', error: err.message });
@@ -253,10 +291,13 @@ app.post('/api/friends/request', authenticateToken, async (req, res) => {
         await receiver.save();
 
         // Notifica il ricevitore via Socket.IO
+        // Decifra la foto del mittente prima di inviarla via socket
+        let senderProfilePictureDecrypted = sender.profilePicture ? decrypt(sender.profilePicture, IMAGE_ENCRYPTION_KEY) : null;
+
         io.to(receiverId).emit('friendRequest', {
             _id: sender._id,
             username: sender.username,
-            profilePicture: sender.profilePicture
+            profilePicture: senderProfilePictureDecrypted
         });
 
         res.status(200).json({ message: 'Friend request sent' });
@@ -288,15 +329,19 @@ app.post('/api/friends/respond', authenticateToken, async (req, res) => {
             await sender.save();
 
             // Notifica entrambi via Socket.IO
+            let senderProfilePictureDecrypted = sender.profilePicture ? decrypt(sender.profilePicture, IMAGE_ENCRYPTION_KEY) : null;
+            let receiverProfilePictureDecrypted = receiver.profilePicture ? decrypt(receiver.profilePicture, IMAGE_ENCRYPTION_KEY) : null;
+
+
             io.to(receiver._id).emit('friendAccepted', {
                 _id: sender._id,
                 username: sender.username,
-                profilePicture: sender.profilePicture
+                profilePicture: senderProfilePictureDecrypted
             });
             io.to(sender._id).emit('friendAccepted', {
                 _id: receiver._id,
                 username: receiver.username,
-                profilePicture: receiver.profilePicture
+                profilePicture: receiverProfilePictureDecrypted
             });
 
             res.status(200).json({ message: 'Friend request accepted' });
@@ -397,10 +442,7 @@ io.on('connection', (socket) => {
             await message.save();
 
             // Decifra il messaggio per l'invio via socket, così i client non devono decifrare
-            const decryptedContent = decrypt(encryptedContent, ENPTION_KEY); // <-- ATTENZIONE QUI
-            // Dovrebbe essere IMAGE_ENCRYPTION_KEY? No, la chiave normale.
-            // Errore di battitura qui, deve essere ENCRYPTION_KEY
-            // Ho corretto nell'esempio qui sopra a ENCRYPTION_KEY
+            const decryptedContent = decrypt(encryptedContent, ENCRYPTION_KEY);
 
             // Emetti il messaggio al mittente e al destinatario
             io.to(senderId).emit('newMessage', {

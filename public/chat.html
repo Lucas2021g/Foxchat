@@ -1,524 +1,834 @@
 <!DOCTYPE html>
-<html lang="it">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Fox Chat</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f0f2f5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            color: #333;
+        }
+        .container {
+            background-color: #fff;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+        }
+        h1 {
+            color: #4a4a4a;
+            margin-bottom: 25px;
+        }
+        input[type="text"],
+        input[type="email"],
+        input[type="password"] {
+            width: calc(100% - 20px);
+            padding: 12px;
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s ease;
+            width: 100%;
+            margin-bottom: 10px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .error-message {
+            color: red;
+            margin-top: 10px;
+            font-weight: bold;
+        }
+        .success-message {
+            color: green;
+            margin-top: 10px;
+            font-weight: bold;
+        }
+        #chat-interface {
+            display: none; /* Inizialmente nascosta */
+            text-align: left;
+            margin-top: 20px;
+        }
+        #friend-list {
+            border: 1px solid #eee;
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 15px;
+            max-height: 200px;
+            overflow-y: auto;
+            background-color: #f9f9f9;
+        }
+        #friend-list h3 {
+            margin-top: 0;
+            color: #555;
+        }
+        .friend-item {
+            display: flex;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+        .friend-item:last-child {
+            border-bottom: none;
+        }
+        .friend-item:hover {
+            background-color: #e9e9e9;
+        }
+        .friend-item img.profile-pic {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            margin-right: 10px;
+            object-fit: cover;
+        }
+        .friend-item span.username {
+            font-weight: bold;
+            color: #333;
+        }
+        #search-results {
+            margin-top: 10px;
+            max-height: 150px;
+            overflow-y: auto;
+            border: 1px solid #eee;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+        }
+        .search-result-item {
+            display: flex;
+            align-items: center;
+            padding: 8px 10px;
+            border-bottom: 1px solid #eee;
+        }
+        .search-result-item:last-child {
+            border-bottom: none;
+        }
+        .search-result-item button {
+            margin-left: auto;
+            width: auto;
+            padding: 5px 10px;
+            font-size: 14px;
+        }
+
+        /* Chat Window */
+        #chat-window {
+            display: none;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            margin-top: 20px;
+            background-color: #fff;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        }
+        #chat-header {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 15px;
+            border-top-left-radius: 8px;
+            border-top-right-radius: 8px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        #chat-header img.profile-pic {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            object-fit: cover;
+        }
+        #chat-header span {
+            font-weight: bold;
+        }
+        #messages-display {
+            padding: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+        .message-bubble {
+            max-width: 70%;
+            padding: 8px 12px;
+            border-radius: 15px;
+            margin-bottom: 8px;
+            word-wrap: break-word;
+        }
+        .message-bubble.sent {
+            background-color: #dcf8c6;
+            align-self: flex-end;
+        }
+        .message-bubble.received {
+            background-color: #e6e6e6;
+            align-self: flex-start;
+        }
+        #message-input-form {
+            display: flex;
+            padding: 10px 15px;
+            border-top: 1px solid #eee;
+        }
+        #message-input-form input[type="text"] {
+            flex-grow: 1;
+            margin-bottom: 0;
+            margin-right: 10px;
+        }
+        #message-input-form button {
+            width: auto;
+            padding: 10px 15px;
+            margin-bottom: 0;
+        }
+        .chat-area {
+            display: none;
+        }
+        #pending-requests-section {
+            margin-top: 20px;
+            border: 1px solid #eee;
+            padding: 10px;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+        }
+        .request-item {
+            display: flex;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .request-item:last-child {
+            border-bottom: none;
+        }
+        .request-item button {
+            margin-left: auto;
+            width: auto;
+            padding: 5px 10px;
+            font-size: 14px;
+            margin-right: 5px;
+        }
+        .request-item button:last-child {
+            margin-right: 0;
+        }
+        .request-item img.profile-pic {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            margin-right: 10px;
+            object-fit: cover;
+        }
+    </style>
 </head>
 <body>
-    <div class="chat-container">
-        <header>
-            <h1 id="welcomeMessage">Benvenuto, Ospite!</h1>
-            <button id="logoutBtn">Logout</button>
-        </header>
+    <div class="container">
+        <h1>Benvenuto su Fox Chat</h1>
 
-        <div class="chat-main">
-            <div class="sidebar">
-                <h2>Amici</h2>
-                <ul id="friendsList"></ul>
+        <div id="auth-section">
+            <h2>Registrati</h2>
+            <input type="text" id="registerUsername" placeholder="Username" required>
+            <input type="email" id="registerEmail" placeholder="Email" required>
+            <input type="password" id="registerPassword" placeholder="Password" required>
+            <button id="registerButton">Registrati</button>
+            <p class="error-message" id="registerError"></p>
+            <p class="success-message" id="registerSuccess"></p>
 
-                <h2>Richieste di Amicizia</h2>
-                <ul id="friendRequestsList"></ul>
+            <hr style="margin: 30px 0;">
 
-                <h2>Aggiungi Amico</h2>
-                <div class="search-box">
-                    <input type="text" id="searchUserInput" placeholder="Cerca username...">
-                    <button id="searchUserBtn">Cerca</button>
-                </div>
-                <div id="searchResults"></div>
+            <h2>Accedi</h2>
+            <input type="text" id="loginUsername" placeholder="Username" required>
+            <input type="password" id="loginPassword" placeholder="Password" required>
+            <button id="loginButton">Accedi</button>
+            <p class="error-message" id="loginError"></p>
+            <p class="success-message" id="loginSuccess"></p>
+        </div>
+
+        <div id="chat-interface">
+            <p>Benvenuto, <span id="currentUsername"></span>!</p>
+            <button id="logoutButton">Logout</button>
+
+            <hr style="margin: 20px 0;">
+            <h3>Carica Immagine Profilo</h3>
+            <input type="file" id="profilePictureInput" accept="image/*">
+            <button id="uploadProfilePictureButton">Carica</button>
+            <p class="success-message" id="uploadSuccess"></p>
+            <p class="error-message" id="uploadError"></p>
+            <hr style="margin: 20px 0;">
+
+
+            <h2>I Miei Amici</h2>
+            <div id="friend-list">
+                <p id="noFriendsMessage">Nessun amico trovato. Cerca utenti per aggiungerne.</p>
+            </div>
+            <button id="refreshFriendsButton">Aggiorna Amici</button>
+
+            <div id="pending-requests-section" style="display: none;">
+                <h2>Richieste di Amicizia in Sospeso</h2>
+                <div id="friend-requests-received">
+                    </div>
             </div>
 
-            <div class="chat-area">
-                <div id="chatHeader">Seleziona un amico per chattare</div>
-                <div class="messages" id="messagesContainer">
-                    </div>
-                <div class="message-input" id="messageInputArea">
-                    <input type="text" id="messageInput" placeholder="Scrivi un messaggio...">
-                    <label for="imageUpload" class="upload-button">
-                        📷
-                        <input type="file" id="imageUpload" accept="image/*" style="display: none;">
-                    </label>
-                    <button id="sendMessageBtn">Invia</button>
+            <hr style="margin: 20px 0;">
+            <h2>Cerca Utenti</h2>
+            <input type="text" id="searchUserInput" placeholder="Cerca username...">
+            <button id="searchUserButton">Cerca</button>
+            <div id="search-results">
                 </div>
+
+            <div id="chat-window">
+                <div id="chat-header">
+                    <img id="chatFriendPic" class="profile-pic" src="" alt="Friend Pic">
+                    <span id="chatFriendName"></span>
+                </div>
+                <div id="messages-display">
+                    </div>
+                <form id="message-input-form">
+                    <input type="text" id="messageInput" placeholder="Scrivi un messaggio..." required>
+                    <button type="submit">Invia</button>
+                </form>
             </div>
         </div>
     </div>
 
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <script>
-        const BACKEND_URL = 'https://foxchat-bruf.onrender.com'; // Sostituisci con l'URL del tuo backend Render
-        const IMAGE_ENCRYPTION_KEY_CLIENT = '1f6ebc3d415e62802b36d9f86e298943a5ab0c279fa63a0709db8162e49e6b35'; // Sostituisci con la chiave esadecimale di 64 caratteri (la stessa di IMAGE_ENCRYPTION_KEY nel backend)
-        const ENCRYPTION_KEY_CLIENT = '966d1d6c449fac4e180f81fe9faa4655b07533cba3677b37a6e85508978c00aa'; // Sostituisci con la chiave esadecimale di 64 caratteri (la stessa di ENCRYPTION_KEY nel backend)
+        // NON USARE LA VARIABILE BACKEND_URL QUI PER IL DEBUG
+        // Sostituisci direttamente l'URL del tuo backend Render
+        // Questo è per il debug e non è una buona pratica per la produzione!
 
-        // Funzione per decriptare il testo nel frontend
-        function decryptText(textWithIv) {
-            if (!ENCRYPTION_KEY_CLIENT || ENCRYPTION_KEY_CLIENT.length !== 64) {
-                console.error('ENCRYPTION_KEY_CLIENT must be a 64-character hex string');
-                return 'Decryption Error: Key Invalid';
-            }
-            try {
-                const parts = textWithIv.split(':');
-                const ivHex = parts.shift();
-                const encryptedTextHex = parts.join(':');
+        const RENDER_BACKEND_URL = 'https://foxchat-bruf.onrender.com'; // Il tuo indirizzo backend Render
 
-                if (!ivHex || !encryptedTextHex) {
-                    console.error('Invalid encrypted text format:', textWithIv);
-                    return 'Decryption Error: Invalid Format';
-                }
+        // Chiavi di cifratura (DEVONO ESSERE LE STESSE DEL BACKEND!)
+        // Devono essere stringhe di 64 caratteri esadecimali
+        const ENCRYPTION_KEY_CLIENT = "966d1d6c449fac4e180f81fe9faa4655b07533cba3677b37a6e85508978c00aa"; // Sostituisci con la tua chiave
+        const IMAGE_ENCRYPTION_KEY_CLIENT = "1f6ebc3d415e62802b36d9f86e298943a5ab0c279fa63a0709db8162e49e6b35"; // Sostituisci con la tua chiave
 
-                const key = CryptoJS.enc.Hex.parse(ENCRYPTION_KEY_CLIENT);
-                const iv = CryptoJS.enc.Hex.parse(ivHex);
-                const encrypted = CryptoJS.enc.Hex.parse(encryptedTextHex);
-
-                const decrypted = CryptoJS.AES.decrypt({ ciphertext: encrypted }, key, {
-                    iv: iv,
-                    mode: CryptoJS.mode.CBC,
-                    padding: CryptoJS.pad.Pkcs7
-                });
-                return decrypted.toString(CryptoJS.enc.Utf8);
-            } catch (e) {
-                console.error('Error decrypting text:', e);
-                return 'Decryption Error';
-            }
-        }
-
-        // Funzione per decriptare l'URL dell'immagine nel frontend
-        function decryptImage(imageWithIv) {
-            if (!IMAGE_ENCRYPTION_KEY_CLIENT || IMAGE_ENCRYPTION_KEY_CLIENT.length !== 64) {
-                console.error('IMAGE_ENCRYPTION_KEY_CLIENT must be a 64-character hex string');
-                return 'Decryption Error: Key Invalid';
-            }
-            try {
-                const parts = imageWithIv.split(':');
-                const ivHex = parts.shift();
-                const encryptedImageHex = parts.join(':');
-
-                if (!ivHex || !encryptedImageHex) {
-                    console.error('Invalid encrypted image URL format:', imageWithIv);
-                    return ''; // Return empty string or placeholder
-                }
-
-                const key = CryptoJS.enc.Hex.parse(IMAGE_ENCRYPTION_KEY_CLIENT);
-                const iv = CryptoJS.enc.Hex.parse(ivHex);
-                const encrypted = CryptoJS.enc.Hex.parse(encryptedImageHex);
-
-                const decrypted = CryptoJS.AES.decrypt({ ciphertext: encrypted }, key, {
-                    iv: iv,
-                    mode: CryptoJS.mode.CBC,
-                    padding: CryptoJS.pad.Pkcs7
-                });
-                return decrypted.toString(CryptoJS.enc.Utf8);
-            } catch (e) {
-                console.error('Error decrypting image URL:', e);
-                return ''; // Return empty string on error
-            }
-        }
-
-        // --- Inizializzazione e Variabili ---
-        const token = localStorage.getItem('token');
-        const loggedInUsername = localStorage.getItem('username');
-        let currentChatFriendId = null;
-        let currentChatFriendUsername = null;
-        let messagePage = 1;
-        let loadingMessages = false;
-        let noMoreMessages = false;
-
-        if (!token || !loggedInUsername) {
-            window.location.href = 'index.html'; // Reindirizza se non loggato
-        }
-
-        document.getElementById('welcomeMessage').textContent = `Benvenuto, ${loggedInUsername}!`;
-
-        const socket = io(BACKEND_URL, {
-            auth: {
-                token: token
-            }
-        });
-
-        // --- Funzioni UI ---
-        function displayMessage(messageData, isSender) {
-            const messagesContainer = document.getElementById('messagesContainer');
-            const messageDiv = document.createElement('div');
-            messageDiv.classList.add('message-item');
-            messageDiv.classList.add(isSender ? 'sent' : 'received');
-
-            const timestamp = new Date(messageData.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-            if (messageData.message) {
-                const decryptedText = decryptText(messageData.message);
-                const textSpan = document.createElement('span');
-                textSpan.textContent = decryptedText;
-                messageDiv.appendChild(textSpan);
-            }
-
-            if (messageData.imageUrl) {
-                const decryptedImageUrl = decryptImage(messageData.imageUrl);
-                const img = document.createElement('img');
-                img.src = decryptedImageUrl;
-                img.alt = 'Immagine';
-                img.style.maxWidth = '200px';
-                img.style.maxHeight = '200px';
-                messageDiv.appendChild(img);
-            }
-
-            const timeSpan = document.createElement('span');
-            timeSpan.classList.add('timestamp');
-            timeSpan.textContent = timestamp;
-            messageDiv.appendChild(timeSpan);
-
-            messagesContainer.appendChild(messageDiv);
-        }
-
-        // --- Gestione Logout ---
-        document.getElementById('logoutBtn').addEventListener('click', () => {
-            localStorage.removeItem('token');
-            localStorage.removeItem('username');
-            window.location.href = 'index.html';
-        });
-
-        // --- Funzioni API ---
-        async function fetchFriends() {
-            try {
-                const response = await fetch(`${BACKEND_URL}/api/friends`, {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (!response.ok) throw new Error('Errore nel recupero amici');
-                const friends = await response.json();
-                const friendsList = document.getElementById('friendsList');
-                friendsList.innerHTML = '';
-                friends.forEach(friend => {
-                    const li = document.createElement('li');
-                    li.textContent = friend.username;
-                    li.dataset.id = friend._id;
-                    li.classList.add('friend-item');
-                    li.addEventListener('click', () => selectChat(friend._id, friend.username));
-
-                    // Aggiungi indicatore online/offline (inizialmente offline, poi aggiornato da socket)
-                    const statusSpan = document.createElement('span');
-                    statusSpan.classList.add('status-indicator', 'offline');
-                    statusSpan.id = `status-${friend.username}`;
-                    li.appendChild(statusSpan);
-
-                    friendsList.appendChild(li);
-                });
-            } catch (error) {
-                console.error('Errore fetch amici:', error);
-            }
-        }
-
-        async function fetchFriendRequests() {
-            try {
-                const response = await fetch(`${BACKEND_URL}/api/friends/requests`, {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (!response.ok) throw new Error('Errore nel recupero richieste');
-                const requests = await response.json();
-                const requestsList = document.getElementById('friendRequestsList');
-                requestsList.innerHTML = '';
-                if (requests.length === 0) {
-                    requestsList.innerHTML = '<li class="no-requests">Nessuna richiesta in sospeso.</li>';
-                }
-                requests.forEach(request => {
-                    const li = document.createElement('li');
-                    li.innerHTML = `
-                        <span>${request.username}</span>
-                        <button class="accept-btn" data-id="${request._id}">Accetta</button>
-                        <button class="reject-btn" data-id="${request._id}">Rifiuta</button>
-                    `;
-                    requestsList.appendChild(li);
-                });
-
-                document.querySelectorAll('.accept-btn').forEach(btn => {
-                    btn.addEventListener('click', (e) => acceptFriendRequest(e.target.dataset.id));
-                });
-                document.querySelectorAll('.reject-btn').forEach(btn => {
-                    btn.addEventListener('click', (e) => rejectFriendRequest(e.target.dataset.id));
-                });
-            } catch (error) {
-                console.error('Errore fetch richieste:', error);
-            }
-        }
-
-        async function acceptFriendRequest(senderId) {
-            try {
-                const response = await fetch(`${BACKEND_URL}/api/friends/accept`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`
-                    },
-                    body: JSON.stringify({ senderId })
-                });
-                if (!response.ok) throw new Error('Errore nell\'accettazione');
-                await fetchFriendRequests();
-                await fetchFriends();
-            } catch (error) {
-                console.error('Errore accettazione richiesta:', error);
-            }
-        }
-
-        async function rejectFriendRequest(senderId) {
-            try {
-                const response = await fetch(`${BACKEND_URL}/api/friends/reject`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`
-                    },
-                    body: JSON.stringify({ senderId })
-                });
-                if (!response.ok) throw new Error('Errore nel rifiuto');
-                await fetchFriendRequests();
-            } catch (error) {
-                console.error('Errore rifiuto richiesta:', error);
-            }
-        }
-
-        async function searchUser() {
-            const query = document.getElementById('searchUserInput').value;
-            if (!query) return;
-            try {
-                const response = await fetch(`${BACKEND_URL}/api/users/search?query=${query}`, {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (!response.ok) throw new Error('Errore nella ricerca');
-                const users = await response.json();
-                const searchResultsDiv = document.getElementById('searchResults');
-                searchResultsDiv.innerHTML = '';
-                if (users.length === 0) {
-                    searchResultsDiv.textContent = 'Nessun utente trovato.';
-                    return;
-                }
-                users.forEach(user => {
-                    const div = document.createElement('div');
-                    div.classList.add('search-result-item');
-                    div.innerHTML = `
-                        <span>${user.username}</span>
-                        <button data-id="${user._id}">Aggiungi</button>
-                    `;
-                    div.querySelector('button').addEventListener('click', () => sendFriendRequest(user._id));
-                    searchResultsDiv.appendChild(div);
-                });
-            } catch (error) {
-                console.error('Errore ricerca utente:', error);
-            }
-        }
-
-        async function sendFriendRequest(recipientId) {
-            try {
-                const response = await fetch(`${BACKEND_URL}/api/friends/request`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`
-                    },
-                    body: JSON.stringify({ recipientId })
-                });
-                const data = await response.json();
-                alert(data.message);
-                if (response.ok) {
-                    document.getElementById('searchUserInput').value = '';
-                    document.getElementById('searchResults').innerHTML = '';
-                }
-            } catch (error) {
-                console.error('Errore invio richiesta amicizia:', error);
-                alert('Errore durante l\'invio della richiesta di amicizia.');
-            }
-        }
-
-        // --- Gestione Chat ---
-        async function selectChat(friendId, friendUsername) {
-            if (currentChatFriendId === friendId) return; // Evita di ricaricare la stessa chat
-
-            currentChatFriendId = friendId;
-            currentChatFriendUsername = friendUsername;
-            document.getElementById('chatHeader').textContent = `Chat con ${friendUsername}`;
-            document.getElementById('messagesContainer').innerHTML = ''; // Pulisci i messaggi precedenti
-            messagePage = 1; // Resetta la paginazione
-            noMoreMessages = false; // Resetta lo stato dei messaggi
-            loadMessages();
-            document.getElementById('messageInputArea').style.display = 'flex'; // Mostra l'area input
-        }
-
-        async function loadMessages() {
-            if (loadingMessages || noMoreMessages || !currentChatFriendId) return;
-
-            loadingMessages = true;
-            try {
-                const response = await fetch(`${BACKEND_URL}/api/messages/${currentChatFriendId}?page=${messagePage}&limit=20`, {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (!response.ok) throw new Error('Errore nel recupero dei messaggi');
-                const messages = await response.json();
-
-                if (messages.length === 0) {
-                    noMoreMessages = true;
-                } else {
-                    const messagesContainer = document.getElementById('messagesContainer');
-                    const oldScrollHeight = messagesContainer.scrollHeight;
-                    const oldScrollTop = messagesContainer.scrollTop;
-
-                    messages.forEach(msg => {
-                        const isSender = (msg.sender._id === socket.user.id);
-                        const messageDiv = document.createElement('div');
-                        messageDiv.classList.add('message-item');
-                        messageDiv.classList.add(isSender ? 'sent' : 'received');
-
-                        const timestamp = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-                        if (msg.message) {
-                            const decryptedText = decryptText(msg.message);
-                            const textSpan = document.createElement('span');
-                            textSpan.textContent = decryptedText;
-                            messageDiv.appendChild(textSpan);
-                        }
-
-                        if (msg.imageUrl) {
-                            const decryptedImageUrl = decryptImage(msg.imageUrl);
-                            const img = document.createElement('img');
-                            img.src = decryptedImageUrl;
-                            img.alt = 'Immagine';
-                            img.style.maxWidth = '200px';
-                            img.style.maxHeight = '200px';
-                            messageDiv.appendChild(img);
-                        }
-
-                        const timeSpan = document.createElement('span');
-                        timeSpan.classList.add('timestamp');
-                        timeSpan.textContent = timestamp;
-                        messageDiv.appendChild(timeSpan);
-
-                        messagesContainer.prepend(messageDiv); // Inserisci in cima per il caricamento inverso
-                    });
-
-                    // Mantieni la posizione dello scroll se non è la prima pagina
-                    if (messagePage > 1) {
-                        messagesContainer.scrollTop = oldScrollTop + (messagesContainer.scrollHeight - oldScrollHeight);
-                    } else {
-                        messagesContainer.scrollTop = messagesContainer.scrollHeight; // Scrolla in basso per la prima pagina
-                    }
-
-                    messagePage++;
-                }
-            } catch (error) {
-                console.error('Errore caricamento messaggi:', error);
-            } finally {
-                loadingMessages = false;
-            }
-        }
-
-        // Scroll listener per caricamento messaggi più vecchi
-        document.getElementById('messagesContainer').addEventListener('scroll', function() {
-            if (this.scrollTop === 0 && !loadingMessages && !noMoreMessages) {
-                loadMessages();
-            }
-        });
-
-
-        document.getElementById('sendMessageBtn').addEventListener('click', () => {
-            const messageInput = document.getElementById('messageInput');
-            const message = messageInput.value.trim();
-            const imageFile = document.getElementById('imageUpload').files[0];
-
-            if ((!message && !imageFile) || !currentChatFriendUsername) return;
-
-            if (imageFile) {
-                uploadImageAndSendMessage(imageFile, message);
-            } else {
-                sendMessage(message, null);
-            }
-            messageInput.value = ''; // Pulisci l'input testuale
-            document.getElementById('imageUpload').value = ''; // Pulisci l'input file
-        });
-
-        document.getElementById('messageInput').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                document.getElementById('sendMessageBtn').click();
-            }
-        });
-
-        async function uploadImageAndSendMessage(imageFile, messageText) {
-            const formData = new FormData();
-            formData.append('image', imageFile);
-
-            try {
-                const response = await fetch(`${BACKEND_URL}/api/upload-image`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${token}`
-                    },
-                    body: formData
-                });
-
-                if (!response.ok) throw new Error('Errore nell\'upload dell\'immagine');
-                const data = await response.json();
-                sendMessage(messageText, data.encryptedImageUrl); // Invia il messaggio con l'URL criptato
-            } catch (error) {
-                console.error('Errore upload immagine:', error);
-                alert('Errore durante l\'upload dell\'immagine.');
-            }
-        }
-
-        function sendMessage(messageText, encryptedImageUrl) {
-            socket.emit('send_message', {
-                receiverUsername: currentChatFriendUsername,
-                message: messageText || null, // Invia il testo se presente
-                imageUrl: encryptedImageUrl || null // Invia l'URL criptato se presente
+        // Funzioni di cifratura/decifratura sul frontend
+        const encryptMessage = (message) => {
+            const iv = CryptoJS.lib.WordArray.random(16); // 16 bytes IV
+            const encrypted = CryptoJS.AES.encrypt(message, CryptoJS.enc.Hex.parse(ENCRYPTION_KEY_CLIENT), {
+                iv: iv,
+                mode: CryptoJS.mode.CBC,
+                padding: CryptoJS.pad.Pkcs7
             });
-        }
+            return iv.toString(CryptoJS.enc.Hex) + ':' + encrypted.toString();
+        };
 
-        // --- Gestione Socket Events ---
+        const decryptMessage = (encryptedText) => {
+            try {
+                const parts = encryptedText.split(':');
+                const iv = CryptoJS.enc.Hex.parse(parts[0]);
+                const encrypted = parts[1];
+                const decrypted = CryptoJS.AES.decrypt(encrypted, CryptoJS.enc.Hex.parse(ENCRYPTION_KEY_CLIENT), {
+                    iv: iv,
+                    mode: CryptoJS.mode.CBC,
+                    padding: CryptoJS.pad.Pkcs7
+                });
+                return decrypted.toString(CryptoJS.enc.Utf8);
+            } catch (error) {
+                console.error("Decryption Error:", error);
+                return "[Encrypted Message]"; // In caso di errore di decifratura
+            }
+        };
+
+        const decryptImageUrl = (encryptedUrl) => {
+            try {
+                const parts = encryptedUrl.split(':');
+                if (parts.length !== 2) {
+                    // Se il formato non corrisponde (es. URL non cifrato o chiave errata)
+                    // Restituisce l'URL originale o un placeholder
+                    return encryptedUrl;
+                }
+                const iv = CryptoJS.enc.Hex.parse(parts[0]);
+                const encrypted = parts[1];
+                const decrypted = CryptoJS.AES.decrypt(encrypted, CryptoJS.enc.Hex.parse(IMAGE_ENCRYPTION_KEY_CLIENT), {
+                    iv: iv,
+                    mode: CryptoJS.mode.CBC,
+                    padding: CryptoJS.pad.Pkcs7
+                });
+                return decrypted.toString(CryptoJS.enc.Utf8);
+            } catch (error) {
+                console.error("Image URL Decryption Error:", error);
+                return "https://res.cloudinary.com/demo/image/upload/w_150,h_150,c_fill,g_face/no_profile_pic.png"; // Immagine placeholder in caso di errore
+            }
+        };
+
+
+        let currentUserId = null;
+        let currentUsername = null;
+        let currentFriendId = null; // ID dell'amico con cui si sta chattando
+        let currentFriendName = null;
+        let currentFriendPic = null;
+
+        const authSection = document.getElementById('auth-section');
+        const chatInterface = document.getElementById('chat-interface');
+        const currentUsernameSpan = document.getElementById('currentUsername');
+        const logoutButton = document.getElementById('logoutButton');
+        const registerButton = document.getElementById('registerButton');
+        const loginButton = document.getElementById('loginButton');
+        const registerError = document.getElementById('registerError');
+        const registerSuccess = document.getElementById('registerSuccess');
+        const loginError = document.getElementById('loginError');
+        const loginSuccess = document.getElementById('loginSuccess');
+        const friendList = document.getElementById('friend-list');
+        const refreshFriendsButton = document.getElementById('refreshFriendsButton');
+        const searchUserInput = document.getElementById('searchUserInput');
+        const searchUserButton = document.getElementById('searchUserButton');
+        const searchResults = document.getElementById('search-results');
+        const chatWindow = document.getElementById('chat-window');
+        const chatFriendName = document.getElementById('chatFriendName');
+        const chatFriendPic = document.getElementById('chatFriendPic');
+        const messagesDisplay = document.getElementById('messages-display');
+        const messageInput = document.getElementById('messageInput');
+        const messageInputForm = document.getElementById('message-input-form');
+        const pendingRequestsSection = document.getElementById('pending-requests-section');
+        const friendRequestsReceivedDiv = document.getElementById('friend-requests-received');
+        const noFriendsMessage = document.getElementById('noFriendsMessage');
+
+        // Socket.IO setup (HARDCODED URL)
+        const socket = io(RENDER_BACKEND_URL, {
+            auth: {
+                token: localStorage.getItem('token')
+            },
+            transports: ['websocket', 'polling']
+        });
+
         socket.on('connect', () => {
-            console.log('Connesso al server Socket.IO');
-            fetchFriends(); // Aggiorna lo stato online/offline degli amici
-            fetchFriendRequests(); // Aggiorna le richieste
+            console.log('Connected to Socket.IO');
+            if (currentUserId) {
+                socket.emit('setUserId', currentUserId);
+            }
         });
 
         socket.on('disconnect', () => {
-            console.log('Disconnesso dal server Socket.IO');
-            // Gestisci la disconnessione, es. notifica all'utente
+            console.log('Disconnected from Socket.IO');
         });
 
-        socket.on('receive_message', (data) => {
-            // Decidi se il messaggio è per la chat corrente o per aggiornare la propria UI
-            const isForCurrentChat = (data.senderId === currentChatFriendId || (data.receiverId && data.receiverId === currentChatFriendId));
+        socket.on('connect_error', (err) => {
+            console.error('Socket.IO connection error:', err.message);
+            // Non mostrare questo all'utente, gestisci internamente
+        });
 
-            if (isForCurrentChat || (data.senderId === socket.user.id && data.receiverId)) { // Se è un messaggio che ho inviato io
-                 // Aggiungi solo se non è già stato aggiunto dal loadMessages iniziale
-                const messagesContainer = document.getElementById('messagesContainer');
-                const isAtBottom = messagesContainer.scrollHeight - messagesContainer.clientHeight <= messagesContainer.scrollTop + 1; // Tolleranza 1px
+        socket.on('newMessage', (message) => {
+            if (message.sender === currentFriendId || message.receiver === currentFriendId) {
+                // Il messaggio è per la chat corrente, decifra e mostra
+                displayMessage(message);
+            }
+            // Se il messaggio non è per la chat corrente, potresti voler mostrare una notifica
+        });
 
-                displayMessage(data, data.senderId === socket.user.id);
+        socket.on('friendRequest', (sender) => {
+            alert(`Nuova richiesta di amicizia da: ${sender.username}`);
+            loadFriendRequests();
+        });
 
-                if (isAtBottom) { // Scorri in basso solo se l'utente era già in basso
-                    messagesContainer.scrollTop = messagesContainer.scrollHeight;
-                }
+        socket.on('friendAccepted', (friend) => {
+            alert(`${friend.username} ha accettato la tua richiesta di amicizia!`);
+            loadFriends();
+        });
+
+        function showMessage(element, message, isSuccess) {
+            element.textContent = message;
+            element.style.display = 'block';
+            if (isSuccess) {
+                element.style.color = 'green';
             } else {
-                // Notifica che c'è un nuovo messaggio da un'altra chat
-                console.log(`Nuovo messaggio da ${data.senderUsername} (non nella chat corrente)`);
-                // Potresti aggiungere un contatore di messaggi non letti sulla lista amici
+                element.style.color = 'red';
             }
-        });
+            setTimeout(() => {
+                element.textContent = '';
+                element.style.display = 'none';
+            }, 5000);
+        }
 
+        async function registerUser() {
+            const username = document.getElementById('registerUsername').value;
+            const email = document.getElementById('registerEmail').value;
+            const password = document.getElementById('registerPassword').value;
 
-        socket.on('friend_status', (data) => {
-            const statusIndicator = document.getElementById(`status-${data.username}`);
-            if (statusIndicator) {
-                statusIndicator.classList.remove('online', 'offline');
-                statusIndicator.classList.add(data.status);
+            try {
+                const response = await fetch(`${RENDER_BACKEND_URL}/api/register`, { // HARDCODED URL
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ username, email, password })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    showMessage(registerSuccess, data.message, true);
+                    showMessage(registerError, '', false); // Clear error
+                } else {
+                    showMessage(registerError, data.message || 'Registration failed', false);
+                    showMessage(registerSuccess, '', true); // Clear success
+                }
+            } catch (error) {
+                console.error('Network Error:', error);
+                showMessage(registerError, 'Errore di connessione al server.', false);
+                showMessage(registerSuccess, '', true); // Clear success
             }
-        });
+        }
 
-        // --- Event Listeners Iniziali ---
-        document.getElementById('searchUserBtn').addEventListener('click', searchUser);
+        async function loginUser() {
+            const username = document.getElementById('loginUsername').value;
+            const password = document.getElementById('loginPassword').value;
 
-        // Carica amici e richieste all'avvio
-        document.addEventListener('DOMContentLoaded', () => {
-            fetchFriends();
-            fetchFriendRequests();
+            try {
+                const response = await fetch(`${RENDER_BACKEND_URL}/api/login`, { // HARDCODED URL
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    localStorage.setItem('token', data.token);
+                    localStorage.setItem('userId', data.userId);
+                    localStorage.setItem('username', data.username);
+                    checkAuthAndLoadChat();
+                    showMessage(loginSuccess, 'Login successful!', true);
+                    showMessage(loginError, '', false); // Clear error
+                } else {
+                    showMessage(loginError, data.message || 'Login failed', false);
+                    showMessage(loginSuccess, '', true); // Clear success
+                }
+            } catch (error) {
+                console.error('Network Error:', error);
+                showMessage(loginError, 'Errore di connessione al server.', false);
+                showMessage(loginSuccess, '', true); // Clear success
+            }
+        }
+
+        async function loadFriends() {
+            const token = localStorage.getItem('token');
+            if (!token) return;
+
+            try {
+                const response = await fetch(`${RENDER_BACKEND_URL}/api/friends`, { // HARDCODED URL
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                const friends = await response.json();
+                friendList.innerHTML = ''; // Pulisci la lista corrente
+
+                if (friends && friends.length > 0) {
+                    noFriendsMessage.style.display = 'none';
+                    friends.forEach(friend => {
+                        const friendDiv = document.createElement('div');
+                        friendDiv.classList.add('friend-item');
+                        friendDiv.innerHTML = `
+                            <img src="${friend.profilePicture || 'https://res.cloudinary.com/demo/image/upload/w_150,h_150,c_fill,g_face/no_profile_pic.png'}" alt="Profile Pic" class="profile-pic">
+                            <span class="username">${friend.username}</span>
+                        `;
+                        friendDiv.addEventListener('click', () => openChat(friend._id, friend.username, friend.profilePicture));
+                        friendList.appendChild(friendDiv);
+                    });
+                } else {
+                    noFriendsMessage.style.display = 'block';
+                }
+            } catch (error) {
+                console.error('Error loading friends:', error);
+                // Non mostrare all'utente errori di caricamento amici, gestisci internamente
+            }
+        }
+
+        async function loadFriendRequests() {
+            const token = localStorage.getItem('token');
+            if (!token) return;
+
+            try {
+                const response = await fetch(`${RENDER_BACKEND_URL}/api/user`, { // HARDCODED URL
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                const user = await response.json();
+
+                if (user && user.friendRequestsReceived && user.friendRequestsReceived.length > 0) {
+                    pendingRequestsSection.style.display = 'block';
+                    friendRequestsReceivedDiv.innerHTML = '';
+                    for (const senderId of user.friendRequestsReceived) {
+                        // Per semplicità, recuperiamo i dettagli del mittente. In un'app reale, potresti voler popolare
+                        // direttamente dal backend per ridurre le richieste.
+                        const senderResponse = await fetch(`${RENDER_BACKEND_URL}/api/users/search?query=${senderId}`, { // HARDCODED URL - non ideale, ma per ID
+                            method: 'GET',
+                            headers: { 'Authorization': `Bearer ${token}` }
+                        });
+                        const senderData = await senderResponse.json();
+                        const sender = senderData.find(u => u._id === senderId); // Trova l'utente corretto
+
+                        if (sender) {
+                            const requestDiv = document.createElement('div');
+                            requestDiv.classList.add('request-item');
+                            requestDiv.innerHTML = `
+                                <img src="${sender.profilePicture || 'https://res.cloudinary.com/demo/image/upload/w_150,h_150,c_fill,g_face/no_profile_pic.png'}" alt="Profile Pic" class="profile-pic">
+                                <span>${sender.username}</span>
+                                <button data-sender-id="${sender._id}" data-action="accept">Accetta</button>
+                                <button data-sender-id="${sender._id}" data-action="reject">Rifiuta</button>
+                            `;
+                            friendRequestsReceivedDiv.appendChild(requestDiv);
+                        }
+                    }
+                    friendRequestsReceivedDiv.querySelectorAll('button').forEach(button => {
+                        button.addEventListener('click', async (e) => {
+                            const senderId = e.target.dataset.senderId;
+                            const action = e.target.dataset.action;
+                            await respondToFriendRequest(senderId, action === 'accept');
+                        });
+                    });
+                } else {
+                    pendingRequestsSection.style.display = 'none';
+                    friendRequestsReceivedDiv.innerHTML = '';
+                }
+            } catch (error) {
+                console.error('Error loading friend requests:', error);
+            }
+        }
+
+        async function respondToFriendRequest(senderId, accept) {
+            const token = localStorage.getItem('token');
+            try {
+                const response = await fetch(`${RENDER_BACKEND_URL}/api/friends/respond`, { // HARDCODED URL
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ senderId, accept })
+                });
+                if (response.ok) {
+                    loadFriendRequests(); // Ricarica le richieste
+                    loadFriends(); // Ricarica gli amici
+                } else {
+                    const data = await response.json();
+                    console.error('Failed to respond to request:', data.message);
+                }
+            } catch (error) {
+                console.error('Network error responding to request:', error);
+            }
+        }
+
+        async function searchUsers() {
+            const query = searchUserInput.value;
+            if (!query) {
+                searchResults.innerHTML = '';
+                return;
+            }
+            const token = localStorage.getItem('token');
+            try {
+                const response = await fetch(`${RENDER_BACKEND_URL}/api/users/search?query=${query}`, { // HARDCODED URL
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                const users = await response.json();
+                searchResults.innerHTML = '';
+                if (users && users.length > 0) {
+                    users.forEach(user => {
+                        const userDiv = document.createElement('div');
+                        userDiv.classList.add('search-result-item');
+                        userDiv.innerHTML = `
+                            <img src="${user.profilePicture || 'https://res.cloudinary.com/demo/image/upload/w_150,h_150,c_fill,g_face/no_profile_pic.png'}" alt="Profile Pic" class="profile-pic">
+                            <span>${user.username}</span>
+                            <button data-user-id="${user._id}">Aggiungi Amico</button>
+                        `;
+                        searchResults.appendChild(userDiv);
+                    });
+                    searchResults.querySelectorAll('button').forEach(button => {
+                        button.addEventListener('click', async (e) => {
+                            const receiverId = e.target.dataset.userId;
+                            await sendFriendRequest(receiverId);
+                        });
+                    });
+                } else {
+                    searchResults.innerHTML = '<p style="padding: 10px;">Nessun utente trovato.</p>';
+                }
+            } catch (error) {
+                console.error('Error searching users:', error);
+                searchResults.innerHTML = '<p style="padding: 10px; color: red;">Errore nella ricerca utenti.</p>';
+            }
+        }
+
+        async function sendFriendRequest(receiverId) {
+            const token = localStorage.getItem('token');
+            try {
+                const response = await fetch(`${RENDER_BACKEND_URL}/api/friends/request`, { // HARDCODED URL
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ receiverId })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    alert(data.message);
+                } else {
+                    alert('Errore: ' + (data.message || 'Impossibile inviare richiesta.'));
+                }
+            } catch (error) {
+                console.error('Network error sending friend request:', error);
+                alert('Errore di rete nell\'invio della richiesta.');
+            }
+        }
+
+        async function openChat(friendId, friendName, friendPic) {
+            currentFriendId = friendId;
+            currentFriendName = friendName;
+            currentFriendPic = friendPic;
+            chatFriendName.textContent = friendName;
+            chatFriendPic.src = friendPic || 'https://res.cloudinary.com/demo/image/upload/w_150,h_150,c_fill,g_face/no_profile_pic.png';
+            messagesDisplay.innerHTML = ''; // Pulisci i messaggi precedenti
+            chatWindow.style.display = 'block';
+            await loadMessages();
+        }
+
+        async function loadMessages() {
+            const token = localStorage.getItem('token');
+            if (!token || !currentFriendId) return;
+
+            try {
+                const response = await fetch(`${RENDER_BACKEND_URL}/api/messages/${currentFriendId}`, { // HARDCODED URL
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                const messages = await response.json();
+                messagesDisplay.innerHTML = '';
+                messages.forEach(msg => displayMessage(msg));
+                messagesDisplay.scrollTop = messagesDisplay.scrollHeight; // Scrolla in fondo
+            } catch (error) {
+                console.error('Error loading messages:', error);
+                // Gestione errore
+            }
+        }
+
+        function displayMessage(message) {
+            const messageDiv = document.createElement('div');
+            messageDiv.classList.add('message-bubble');
+            messageDiv.classList.add(message.sender === currentUserId ? 'sent' : 'received');
+            messageDiv.textContent = message.content; // Il contenuto dovrebbe essere già decifrato dal backend o da socket.on
+            messagesDisplay.appendChild(messageDiv);
+            messagesDisplay.scrollTop = messagesDisplay.scrollHeight;
+        }
+
+        async function sendMessage(event) {
+            event.preventDefault();
+            const content = messageInput.value;
+            if (!content.trim() || !currentFriendId || !currentUserId) return;
+
+            const encryptedContent = encryptMessage(content); // Cifra il messaggio prima di inviarlo via socket
+
+            socket.emit('sendMessage', {
+                senderId: currentUserId,
+                receiverId: currentFriendId,
+                content: encryptedContent // Invia il messaggio cifrato
+            });
+
+            messageInput.value = ''; // Pulisci l'input
+        }
+
+        async function uploadProfilePicture() {
+            const fileInput = document.getElementById('profilePictureInput');
+            const file = fileInput.files[0];
+            if (!file) {
+                showMessage(uploadError, 'Seleziona un file.', false);
+                return;
+            }
+
+            // Converti l'immagine in Base64
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onloadend = async () => {
+                const imageData = reader.result; // Stringa Base64
+                const token = localStorage.getItem('token');
+
+                try {
+                    const response = await fetch(`${RENDER_BACKEND_URL}/api/upload-profile-picture`, { // HARDCODED URL
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                        },
+                        body: JSON.stringify({ imageData })
+                    });
+                    const data = await response.json();
+                    if (response.ok) {
+                        showMessage(uploadSuccess, data.message, true);
+                        // Aggiorna l'immagine di profilo mostrata senza ricaricare la pagina
+                        // Potresti voler ricaricare gli amici o la propria info utente
+                        checkAuthAndLoadChat(); // Ricarica le info utente per aggiornare la pic
+                    } else {
+                        showMessage(uploadError, data.message || 'Caricamento fallito.', false);
+                    }
+                } catch (error) {
+                    console.error('Network error uploading picture:', error);
+                    showMessage(uploadError, 'Errore di rete durante il caricamento.', false);
+                }
+            };
+            reader.onerror = (error) => {
+                console.error('FileReader error:', error);
+                showMessage(uploadError, 'Errore durante la lettura del file.', false);
+            };
+        }
+
+
+        function checkAuthAndLoadChat() {
+            const token = localStorage.getItem('token');
+            currentUserId = localStorage.getItem('userId');
+            currentUsername = localStorage.getItem('username');
+
+            if (token && currentUserId && currentUsername) {
+                authSection.style.display = 'none';
+                chatInterface.style.display = 'block';
+                currentUsernameSpan.textContent = currentUsername;
+                socket.emit('setUserId', currentUserId); // Invia l'ID utente al server Socket.IO
+                loadFriends();
+                loadFriendRequests();
+            } else {
+                authSection.style.display = 'block';
+                chatInterface.style.display = 'none';
+            }
+        }
+
+        // Event Listeners
+        registerButton.addEventListener('click', registerUser);
+        loginButton.addEventListener('click', loginUser);
+        logoutButton.addEventListener('click', () => {
+            localStorage.clear();
+            checkAuthAndLoadChat();
+            chatWindow.style.display = 'none'; // Nascondi la chat se aperta
         });
+        refreshFriendsButton.addEventListener('click', loadFriends);
+        searchUserButton.addEventListener('click', searchUsers);
+        messageInputForm.addEventListener('submit', sendMessage);
+        document.getElementById('uploadProfilePictureButton').addEventListener('click', uploadProfilePicture);
+
+        // Inizializza l'interfaccia al caricamento della pagina
+        document.addEventListener('DOMContentLoaded', checkAuthAndLoadChat);
+
     </script>
 </body>
 </html>

@@ -1,474 +1,429 @@
-// server.js
 require('dotenv').config();
 const express = require('express');
-const http = require('http');
-const socketIo = require('socket.io');
 const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const crypto = require('crypto');
 const cors = require('cors');
-const cloudinary = require('cloudinary').v2;
-const { Buffer } = require('buffer');
+const http = require('http');
+const { Server } = require('socket.io');
+const path = require('path');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs'); // Per hash password
+const cloudinary = require('cloudinary').v2; // Per Cloudinary
 
-// --- Gestori Globali per Errori Non Catturati ---
-// Questi catturano errori che altrimenti farebbero crashare il tuo server silenziosamente.
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-    // In produzione, potresti voler terminare il processo qui (es. process.exit(1);)
-    // per far ripartire il servizio e pulire lo stato.
-});
+const app = express();
+const server = http.createServer(app);
 
-process.on('uncaughtException', (err) => {
-    console.error('Uncaught Exception:', err.message, err.stack);
-    // È consigliabile terminare il processo e riavviare per evitare stati inconsistenti.
-    process.exit(1); // Questo farà sì che Render riavvii il servizio
-});
-
-
-// --- Configurazione Cloudinary ---
+// Configurazione Cloudinary
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// --- Variabili d'ambiente critiche ---
-const JWT_SECRET = process.env.JWT_SECRET;
-const ENCRYPTION_KEY = Buffer.from(process.env.ENCRYPTION_KEY, 'hex'); // Converti da hex a Buffer
-const IMAGE_ENCRYPTION_KEY = Buffer.from(process.env.IMAGE_ENCRYPTION_KEY, 'hex'); // Converti da hex a Buffer
+// Chiavi di cifratura (DEVONO ESSERE STRINGHE DI 64 CARATTERI ESADECIMALI)
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
+const IMAGE_ENCRYPTION_KEY = process.env.IMAGE_ENCRYPTION_KEY;
+const JWT_SECRET = process.env.JWT_SECRET; // JWT Secret
 
-// Controllo per la lunghezza delle chiavi di cifratura (devono essere di 32 byte)
-if (ENCRYPTION_KEY.length !== 32 || IMAGE_ENCRYPTION_KEY.length !== 32) {
-    console.error('Encryption keys must be 32 bytes (64 hex characters) long.');
+// Verifica che le chiavi siano lunghe 64 caratteri e il JWT secret sia presente
+if (!ENCRYPTION_KEY || ENCRYPTION_KEY.length !== 64) {
+    console.error('ERRORE: ENCRYPTION_KEY non è impostata o non è lunga 64 caratteri.');
+    process.exit(1);
+}
+if (!IMAGE_ENCRYPTION_KEY || IMAGE_ENCRYPTION_KEY.length !== 64) {
+    console.error('ERRORE: IMAGE_ENCRYPTION_KEY non è impostata o non è lunga 64 caratteri.');
+    process.exit(1);
+}
+if (!JWT_SECRET) {
+    console.error('ERRORE: JWT_SECRET non è impostato.');
     process.exit(1);
 }
 
-// --- Funzioni di Cifratura/Decifratura ---
-const encrypt = (text, key) => {
-    const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(key), iv);
-    let encrypted = cipher.update(text);
-    encrypted = Buffer.concat([encrypted, cipher.final()]);
-    return iv.toString('hex') + ':' + encrypted.toString('hex');
-};
+// Configurazione CORS per Express
+app.use(cors()); // Permette tutte le origini per ora (puoi restringere in produzione)
+app.use(express.json({ limit: '50mb' })); // Per gestire body JSON, aumenta limite per immagini base64
+app.use(express.urlencoded({ limit: '50mb', extended: true })); // Per gestire URL-encoded bodies
 
-const decrypt = (text, key) => {
-    try {
-        const textParts = text.split(':');
-        const iv = Buffer.from(textParts.shift(), 'hex');
-        const encryptedText = Buffer.from(textParts.join(':'), 'hex');
-        const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(key), iv);
-        let decrypted = decipher.update(encryptedText);
-        decrypted = Buffer.concat([decrypted, decipher.final()]);
-        return decrypted.toString();
-    } catch (error) {
-        console.error("Decryption failed:", error.message);
-        return null; // Restituisce null o lancia un errore per gestione a monte
-    }
-};
+// Connessione a MongoDB
+mongoose.connect(process.env.MONGO_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+})
+.then(() => console.log('Connesso a MongoDB Atlas'))
+.catch(err => console.error('Errore di connessione a MongoDB:', err));
 
-
-// --- Connessione a MongoDB ---
-mongoose.connect(process.env.MONGODB_URI)
-    .then(() => console.log('MongoDB connected'))
-    .catch(err => console.error('MongoDB connection error:', err));
-
-// --- Schemi e Modelli ---
-const userSchema = new mongoose.Schema({
+// --- MODELLI (Definiti direttamente in server.js per semplicità) ---
+const UserSchema = new mongoose.Schema({
     username: { type: String, required: true, unique: true },
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
-    friends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-    friendRequestsSent: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-    friendRequestsReceived: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-    profilePicture: { type: String } // URL della foto su Cloudinary (cifrato)
+    profilePicture: { type: String, default: '' }, // URL dell'immagine di profilo
+    friends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // Array di ID di amici
+    friendRequestsSent: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // Richieste inviate
+    friendRequestsReceived: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // Richieste ricevute
+}, { timestamps: true });
+
+UserSchema.pre('save', async function(next) {
+    if (this.isModified('password')) {
+        this.password = await bcrypt.hash(this.password, 10);
+    }
+    next();
 });
 
-const messageSchema = new mongoose.Schema({
+const User = mongoose.model('User', UserSchema);
+
+const MessageSchema = new mongoose.Schema({
     sender: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     receiver: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    content: { type: String, required: true }, // Contenuto cifrato
+    content: { type: String, required: true },
     timestamp: { type: Date, default: Date.now }
 });
 
-const User = mongoose.model('User', userSchema);
-const Message = mongoose.model('Message', messageSchema);
+const Message = mongoose.model('Message', MessageSchema);
 
 
-// --- Inizializzazione Express e Socket.IO ---
-const app = express();
-const server = http.createServer(app);
-
-// Middleware per il parsing del body delle richieste JSON
-app.use(express.json());
-
-// --- Configurazione CORS ---
-// *** IMPORTANTE: Per il debugging, accetta tutte le origini. ***
-// *** Per la produzione, CAMBIA 'origin: "*"' con l'URL specifico del tuo frontend per sicurezza! ***
-app.use(cors({
-    origin: '*', // Accetta richieste da QUALSIASI origine per debugging
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization']
-}));
-
-// Configurazione CORS per Socket.IO (deve essere separata)
-const io = socketIo(server, {
-    cors: {
-        origin: '*', // Accetta QUALSIASI origine per Socket.IO
-        methods: ["GET", "POST"],
-        credentials: true
-    },
-    pingInterval: 25000,
-    pingTimeout: 60000
-});
-
-// --- Middleware per l'Autenticazione JWT ---
-const authenticateToken = (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-
-    if (token == null) {
-        console.log('Authentication failed: No token provided');
-        return res.status(401).json({ message: 'Authentication token required' });
+// --- MIDDLEWARE DI AUTENTICAZIONE (per rotte protette) ---
+const auth = (req, res, next) => {
+    const authHeader = req.header('Authorization');
+    if (!authHeader) {
+        return res.status(401).json({ message: 'Nessun token, autorizzazione negata' });
     }
 
-    jwt.verify(token, JWT_SECRET, (err, user) => {
-        if (err) {
-            console.error('JWT verification failed:', err.message);
-            return res.status(403).json({ message: 'Invalid or expired token' });
-        }
-        req.user = user;
+    const token = authHeader.replace('Bearer ', '');
+    if (!token) {
+        return res.status(401).json({ message: 'Nessun token, autorizzazione negata' });
+    }
+
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        req.user = decoded;
         next();
-    });
+    } catch (e) {
+        res.status(401).json({ message: 'Token non valido' });
+    }
 };
 
-// --- ROTTE API ---
 
-// Rotta di test (funzionante)
-app.get('/api/test', (req, res) => {
-    console.log('--> Test route hit');
-    res.json({ message: 'Backend is working correctly!' });
-});
+// --- ROTTE API (Definite direttamente in server.js) ---
 
-
-// Registrazione Utente
+// 1. Registrazione Utente
 app.post('/api/register', async (req, res) => {
     console.log('--> Register route hit');
     const { username, email, password } = req.body;
-    console.log('Registering user:', username);
+
     try {
-        const hashedPassword = await bcrypt.hash(password, 10);
-        console.log('Password hashed for:', username);
-        const user = new User({ username, email, password: hashedPassword });
-        await user.save();
-        console.log('User saved successfully:', username);
-        res.status(201).json({ message: 'User registered successfully' });
-        console.log('Register response sent for:', username);
-    } catch (err) {
-        console.error('Error during registration for:', username, 'Error:', err.message, 'Code:', err.code);
-        if (err.code === 11000) { // Duplicate key error
-            return res.status(409).json({ message: 'Username or email already exists' });
+        console.log(`Registering user: ${username}`);
+        let user = await User.findOne({ $or: [{ username }, { email }] });
+        if (user) {
+            return res.status(400).json({ message: 'Utente o email già registrati' });
         }
-        res.status(500).json({ message: 'Error registering user', error: err.message });
+
+        user = new User({ username, email, password });
+        // La password viene hashata nel pre-save hook di Mongoose
+        await user.save();
+        console.log(`User saved successfully: ${username}`);
+
+        const token = jwt.sign({ userId: user._id, username: user.username }, JWT_SECRET, { expiresIn: '1h' });
+        console.log(`Register response sent for: ${username}`);
+        res.status(201).json({ message: 'Registrazione avvenuta con successo', token, userId: user._id, username: user.username });
+    } catch (err) {
+        console.error('Errore nella registrazione:', err);
+        res.status(500).json({ message: 'Errore del server', error: err.message });
     }
 });
 
-// Login Utente
+// 2. Login Utente
 app.post('/api/login', async (req, res) => {
     console.log('--> Login route hit');
     const { username, password } = req.body;
-    console.log('Attempting login for:', username);
+
     try {
+        console.log(`Attempting login for user: ${username}`);
         const user = await User.findOne({ username });
         if (!user) {
-            console.log('Login failed: User not found for:', username);
-            return res.status(400).json({ message: 'Invalid credentials' });
+            return res.status(400).json({ message: 'Credenziali non valide' });
         }
-        console.log('User found for login:', username);
+
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
-            console.log('Login failed: Password mismatch for:', username);
-            return res.status(400).json({ message: 'Invalid credentials' });
+            return res.status(400).json({ message: 'Credenziali non valide' });
         }
-        console.log('Password matched for:', username);
-        const token = jwt.sign({ id: user._id, username: user.username }, JWT_SECRET, { expiresIn: '1h' });
-        console.log('JWT token generated for:', username);
-        res.json({ token, username: user.username, userId: user._id });
-        console.log('Login response sent for:', username);
+
+        const token = jwt.sign({ userId: user._id, username: user.username }, JWT_SECRET, { expiresIn: '1h' });
+        console.log(`Login successful for user: ${username}`);
+        res.json({ message: 'Login avvenuto con successo', token, userId: user._id, username: user.username });
     } catch (err) {
-        console.error('Error during login for:', username, 'Error:', err.message);
-        res.status(500).json({ message: 'Error logging in', error: err.message });
+        console.error('Errore nel login:', err);
+        res.status(500).json({ message: 'Errore del server', error: err.message });
     }
 });
 
-// Ottieni i dettagli dell'utente loggato
-app.get('/api/user', authenticateToken, async (req, res) => {
+// 3. Caricamento Immagine Profilo
+app.post('/api/upload-profile-picture', auth, async (req, res) => {
+    const { imageData } = req.body; // Base64 image data
     try {
-        const user = await User.findById(req.user.id).select('-password');
+        const uploadResult = await cloudinary.uploader.upload(imageData, {
+            folder: 'foxchat_profile_pics', // Cartella su Cloudinary
+            transformation: [{ width: 150, height: 150, crop: "fill", gravity: "face" }]
+        });
+
+        const user = await User.findById(req.user.userId);
         if (!user) {
-            return res.status(404).json({ message: 'User not found' });
+            return res.status(404).json({ message: 'Utente non trovato' });
         }
-        // Decifra l'URL della foto profilo prima di inviarlo al client
-        if (user.profilePicture) {
-            user.profilePicture = decrypt(user.profilePicture, IMAGE_ENCRYPTION_KEY);
+
+        user.profilePicture = uploadResult.secure_url; // Salva l'URL sicuro di Cloudinary
+        await user.save();
+
+        res.json({ message: 'Immagine profilo caricata con successo!', profilePictureUrl: user.profilePicture });
+    } catch (error) {
+        console.error('Errore nel caricamento immagine profilo:', error);
+        res.status(500).json({ message: 'Errore durante il caricamento dell\'immagine.', error: error.message });
+    }
+});
+
+// 4. Ottieni Dettagli Utente (protetta)
+app.get('/api/user', auth, async (req, res) => {
+    try {
+        const user = await User.findById(req.user.userId)
+                                .populate('friends', 'username profilePicture')
+                                .populate('friendRequestsSent', 'username profilePicture')
+                                .populate('friendRequestsReceived', 'username profilePicture')
+                                .select('-password'); // Non inviare la password
+        if (!user) {
+            return res.status(404).json({ message: 'Utente non trovato' });
         }
         res.json(user);
-    } catch (err) {
-        console.error('Error fetching user data:', err.message);
-        res.status(500).json({ message: 'Error fetching user data', error: err.message });
+    } catch (error) {
+        console.error('Errore nel recupero dettagli utente:', error);
+        res.status(500).json({ message: 'Errore del server', error: error.message });
     }
 });
 
-// Ottieni la lista amici
-app.get('/api/friends', authenticateToken, async (req, res) => {
-    try {
-        const user = await User.findById(req.user.id).populate('friends', 'username profilePicture');
-        if (!user) {
-            return res.status(404).json({ message: 'User not found' });
-        }
-        // Decifra le foto profilo degli amici
-        const friendsWithDecryptedPics = user.friends.map(friend => {
-            if (friend.profilePicture) {
-                friend.profilePicture = decrypt(friend.profilePicture, IMAGE_ENCRYPTION_KEY);
-            }
-            return friend;
-        });
-        res.json(friendsWithDecryptedPics);
-    } catch (err) {
-        console.error('Error fetching friends:', err.message);
-        res.status(500).json({ message: 'Error fetching friends', error: err.message });
-    }
-});
-
-// Cerca utenti
-app.get('/api/users/search', authenticateToken, async (req, res) => {
+// 5. Cerca Utenti
+app.get('/api/users/search', auth, async (req, res) => {
     const { query } = req.query;
     try {
         const users = await User.find({
-            username: { $regex: query, $options: 'i' },
-            _id: { $ne: req.user.id } // Non includere l'utente corrente
+            username: { $regex: query, $options: 'i' }, // Ricerca case-insensitive
+            _id: { $ne: req.user.userId } // Escludi se stesso
         }).select('username profilePicture');
-
-        // Decifra le foto profilo degli utenti cercati
-        const usersWithDecryptedPics = users.map(user => {
-            if (user.profilePicture) {
-                user.profilePicture = decrypt(user.profilePicture, IMAGE_ENCRYPTION_KEY);
-            }
-            return user;
-        });
-
-        res.json(usersWithDecryptedPics);
-    } catch (err) {
-        console.error('Error searching users:', err.message);
-        res.status(500).json({ message: 'Error searching users', error: err.message });
+        res.json(users);
+    } catch (error) {
+        console.error('Errore nella ricerca utenti:', error);
+        res.status(500).json({ message: 'Errore del server', error: error.message });
     }
 });
 
-// Invia richiesta d'amicizia
-app.post('/api/friends/request', authenticateToken, async (req, res) => {
+// 6. Invia Richiesta di Amicizia
+app.post('/api/friends/request', auth, async (req, res) => {
     const { receiverId } = req.body;
+    const senderId = req.user.userId;
+
     try {
-        const sender = await User.findById(req.user.id);
+        const sender = await User.findById(senderId);
         const receiver = await User.findById(receiverId);
 
         if (!sender || !receiver) {
-            return res.status(404).json({ message: 'Sender or receiver not found' });
+            return res.status(404).json({ message: 'Mittente o destinatario non trovato' });
         }
-        if (sender.friends.includes(receiverId) || receiver.friends.includes(req.user.id)) {
-            return res.status(400).json({ message: 'Already friends' });
+
+        if (sender.friends.includes(receiverId)) {
+            return res.status(400).json({ message: 'Siete già amici' });
         }
         if (sender.friendRequestsSent.includes(receiverId)) {
-            return res.status(400).json({ message: 'Friend request already sent' });
+            return res.status(400).json({ message: 'Richiesta di amicizia già inviata' });
         }
+        if (receiver.friendRequestsReceived.includes(senderId)) {
+            return res.status(400).json({ message: 'Richiesta di amicizia già ricevuta' });
+        }
+
+        // Se il ricevitore ha già inviato una richiesta al mittente, accettala automaticamente
         if (sender.friendRequestsReceived.includes(receiverId)) {
-            return res.status(400).json({ message: 'User has already sent you a friend request, please accept it' });
+            await User.findByIdAndUpdate(senderId, {
+                $pull: { friendRequestsReceived: receiverId },
+                $addToSet: { friends: receiverId }
+            });
+            await User.findByIdAndUpdate(receiverId, {
+                $pull: { friendRequestsSent: senderId },
+                $addToSet: { friends: senderId }
+            });
+            io.to(senderId).emit('friendAccepted', { _id: receiverId, username: receiver.username });
+            io.to(receiverId).emit('friendAccepted', { _id: senderId, username: sender.username });
+            return res.status(200).json({ message: 'Richiesta di amicizia accettata automaticamente! Siete ora amici.' });
         }
 
         sender.friendRequestsSent.push(receiverId);
-        receiver.friendRequestsReceived.push(req.user.id);
+        receiver.friendRequestsReceived.push(senderId);
+
         await sender.save();
         await receiver.save();
 
-        // Notifica il ricevitore via Socket.IO
-        // Decifra la foto del mittente prima di inviarla via socket
-        let senderProfilePictureDecrypted = sender.profilePicture ? decrypt(sender.profilePicture, IMAGE_ENCRYPTION_KEY) : null;
+        // Notifica il destinatario tramite Socket.IO
+        io.to(receiverId).emit('friendRequest', { _id: sender._id, username: sender.username });
 
-        io.to(receiverId).emit('friendRequest', {
-            _id: sender._id,
-            username: sender.username,
-            profilePicture: senderProfilePictureDecrypted
-        });
-
-        res.status(200).json({ message: 'Friend request sent' });
-    } catch (err) {
-        console.error('Error sending friend request:', err.message);
-        res.status(500).json({ message: 'Error sending friend request', error: err.message });
+        res.status(200).json({ message: 'Richiesta di amicizia inviata!' });
+    } catch (error) {
+        console.error('Errore nell\'invio richiesta amicizia:', error);
+        res.status(500).json({ message: 'Errore del server', error: error.message });
     }
 });
 
-// Accetta/Rifiuta richiesta d'amicizia
-app.post('/api/friends/respond', authenticateToken, async (req, res) => {
+// 7. Rispondi a Richiesta di Amicizia
+app.post('/api/friends/respond', auth, async (req, res) => {
     const { senderId, accept } = req.body;
+    const receiverId = req.user.userId; // Chi sta rispondendo
+
     try {
-        const receiver = await User.findById(req.user.id);
+        const receiver = await User.findById(receiverId);
         const sender = await User.findById(senderId);
 
         if (!receiver || !sender) {
-            return res.status(404).json({ message: 'User not found' });
+            return res.status(404).json({ message: 'Utente non trovato' });
         }
 
-        // Rimuovi la richiesta dalle liste di entrambi
-        receiver.friendRequestsReceived = receiver.friendRequestsReceived.filter(id => id.toString() !== senderId);
-        sender.friendRequestsSent = sender.friendRequestsSent.filter(id => id.toString() !== req.user.id);
+        if (!receiver.friendRequestsReceived.includes(senderId)) {
+            return res.status(400).json({ message: 'Nessuna richiesta di amicizia da questo utente' });
+        }
 
         if (accept) {
+            // Rimuovi dalla lista richieste ricevute e aggiungi agli amici
+            receiver.friendRequestsReceived.pull(senderId);
             receiver.friends.push(senderId);
-            sender.friends.push(req.user.id);
+            // Aggiorna anche il mittente
+            sender.friendRequestsSent.pull(receiverId);
+            sender.friends.push(receiverId);
+
             await receiver.save();
             await sender.save();
 
-            // Notifica entrambi via Socket.IO
-            let senderProfilePictureDecrypted = sender.profilePicture ? decrypt(sender.profilePicture, IMAGE_ENCRYPTION_KEY) : null;
-            let receiverProfilePictureDecrypted = receiver.profilePicture ? decrypt(receiver.profilePicture, IMAGE_ENCRYPTION_KEY) : null;
-
-
-            io.to(receiver._id).emit('friendAccepted', {
-                _id: sender._id,
-                username: sender.username,
-                profilePicture: senderProfilePictureDecrypted
-            });
-            io.to(sender._id).emit('friendAccepted', {
-                _id: receiver._id,
-                username: receiver.username,
-                profilePicture: receiverProfilePictureDecrypted
-            });
-
-            res.status(200).json({ message: 'Friend request accepted' });
+            // Notifica il mittente tramite Socket.IO
+            io.to(senderId).emit('friendAccepted', { _id: receiver._id, username: receiver.username });
+            res.status(200).json({ message: 'Richiesta di amicizia accettata!' });
         } else {
+            // Rifiuta: rimuovi solo dalla lista richieste ricevute
+            receiver.friendRequestsReceived.pull(senderId);
+            sender.friendRequestsSent.pull(receiverId); // Rimuovi anche da richieste inviate del mittente
+
             await receiver.save();
             await sender.save();
-            res.status(200).json({ message: 'Friend request rejected' });
+
+            res.status(200).json({ message: 'Richiesta di amicizia rifiutata.' });
         }
-    } catch (err) {
-        console.error('Error responding to friend request:', err.message);
-        res.status(500).json({ message: 'Error responding to friend request', error: err.message });
+    } catch (error) {
+        console.error('Errore nel rispondere alla richiesta di amicizia:', error);
+        res.status(500).json({ message: 'Errore del server', error: error.message });
     }
 });
 
-
-// Rotta per i messaggi
-app.get('/api/messages/:friendId', authenticateToken, async (req, res) => {
+// 8. Ottieni Lista Amici
+app.get('/api/friends', auth, async (req, res) => {
     try {
-        const { friendId } = req.params;
-        const userId = req.user.id;
+        const user = await User.findById(req.user.userId).populate('friends', 'username profilePicture');
+        if (!user) {
+            return res.status(404).json({ message: 'Utente non trovato' });
+        }
+        res.json(user.friends);
+    } catch (error) {
+        console.error('Errore nel recupero della lista amici:', error);
+        res.status(500).json({ message: 'Errore del server', error: error.message });
+    }
+});
 
-        // Recupera i messaggi tra i due utenti, cifrati
+// 9. Ottieni Messaggi tra due utenti
+app.get('/api/messages/:friendId', auth, async (req, res) => {
+    const { friendId } = req.params;
+    const userId = req.user.userId;
+
+    try {
         const messages = await Message.find({
             $or: [
                 { sender: userId, receiver: friendId },
                 { sender: friendId, receiver: userId }
             ]
-        }).sort('timestamp');
+        }).sort({ timestamp: 1 }); // Ordina per data crescente
 
-        // Decifra i contenuti dei messaggi prima di inviarli
-        const decryptedMessages = messages.map(msg => ({
-            ...msg._doc,
-            content: decrypt(msg.content, ENCRYPTION_KEY)
-        }));
-
-        res.json(decryptedMessages);
-    } catch (err) {
-        console.error('Error fetching messages:', err.message);
-        res.status(500).json({ message: 'Error fetching messages', error: err.message });
+        res.json(messages);
+    } catch (error) {
+        console.error('Errore nel recupero messaggi:', error);
+        res.status(500).json({ message: 'Errore del server', error: error.message });
     }
 });
 
-// Rotta per caricare immagini profilo
-app.post('/api/upload-profile-picture', authenticateToken, async (req, res) => {
-    const { imageData } = req.body; // Base64 image data
-    try {
-        // Carica l'immagine su Cloudinary
-        const uploadResult = await cloudinary.uploader.upload(imageData, {
-            folder: 'profile_pictures',
-            transformation: {
-                width: 150,
-                height: 150,
-                crop: "fill",
-                gravity: "face"
-            }
-        });
-
-        // Cifra l'URL dell'immagine prima di salvarlo nel database
-        const encryptedUrl = encrypt(uploadResult.secure_url, IMAGE_ENCRYPTION_KEY);
-
-        // Aggiorna l'URL della foto profilo nel database utente
-        const user = await User.findById(req.user.id);
-        if (!user) {
-            return res.status(404).json({ message: 'User not found' });
-        }
-        user.profilePicture = encryptedUrl;
-        await user.save();
-
-        res.json({ message: 'Profile picture updated', profilePicture: uploadResult.secure_url });
-
-    } catch (err) {
-        console.error('Error uploading profile picture:', err.message);
-        res.status(500).json({ message: 'Error uploading profile picture', error: err.message });
-    }
+// ROOT endpoint (per testare che il server sia attivo)
+app.get('/', (req, res) => {
+    res.send('Server running! Connect OK');
 });
 
-// --- Socket.IO Handlers ---
-io.on('connection', (socket) => {
-    console.log('A user connected:', socket.id);
+// Endpoint di test per CORS e /api/register
+app.get('/api/register', (req, res) => {
+    res.send('Connect OK /api/register');
+});
 
-    // Associa l'ID utente (dal JWT) all'ID del socket
-    socket.on('setUserId', (userId) => {
-        socket.join(userId); // Unisci il socket a una room con l'ID utente
-        console.log(`User ${userId} joined socket room`);
+
+// Gestione errori globale
+app.use((err, req, res, next) => {
+    console.error(err.stack); // Stampa lo stack trace completo dell'errore
+    res.status(err.statusCode || 500).json({
+        message: err.message || 'Qualcosa è andato storto!',
+        error: process.env.NODE_ENV === 'production' ? {} : err.stack // Non mostrare stack in produzione
     });
+});
 
-    socket.on('sendMessage', async (data) => {
-        const { senderId, receiverId, content } = data;
+// Socket.IO
+const io = new Server(server, {
+    cors: {
+        origin: "*", // Permetti connessioni da qualsiasi origine per il frontend
+        methods: ["GET", "POST"]
+    }
+});
+
+io.use((socket, next) => {
+    const token = socket.handshake.auth.token;
+    if (!token) {
+        return next(new Error('Authentication error: Token missing'));
+    }
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        socket.userId = decoded.userId;
+        next();
+    } catch (error) {
+        return next(new Error('Authentication error: Invalid token'));
+    }
+});
+
+io.on('connection', (socket) => {
+    console.log(`User connected: ${socket.userId}`);
+
+    socket.join(socket.userId); // Ogni utente si unisce a una stanza con il proprio ID
+
+    socket.on('sendMessage', async ({ senderId, receiverId, content }) => {
         try {
-            // Cifra il messaggio prima di salvarlo
-            const encryptedContent = encrypt(content, ENCRYPTION_KEY);
-
+            // Salva il messaggio nel database
             const message = new Message({
                 sender: senderId,
                 receiver: receiverId,
-                content: encryptedContent,
+                content: content, // Contenuto già cifrato dal frontend
+                timestamp: new Date()
             });
             await message.save();
 
-            // Decifra il messaggio per l'invio via socket, così i client non devono decifrare
-            const decryptedContent = decrypt(encryptedContent, ENCRYPTION_KEY);
-
-            // Emetti il messaggio al mittente e al destinatario
-            io.to(senderId).emit('newMessage', {
-                sender: senderId,
-                receiver: receiverId,
-                content: decryptedContent,
-                timestamp: message.timestamp
-            });
-            io.to(receiverId).emit('newMessage', {
-                sender: senderId,
-                receiver: receiverId,
-                content: decryptedContent,
-                timestamp: message.timestamp
-            });
+            // Invia il messaggio al mittente e al destinatario
+            // Il messaggio deve essere decifrato solo quando viene visualizzato sul frontend
+            io.to(senderId).emit('newMessage', message);
+            io.to(receiverId).emit('newMessage', message);
+            console.log(`Message sent from ${senderId} to ${receiverId}`);
         } catch (error) {
-            console.error('Error saving or sending message via socket:', error.message);
+            console.error('Error sending message:', error);
         }
     });
 
     socket.on('disconnect', () => {
-        console.log('User disconnected:', socket.id);
+        console.log(`User disconnected: ${socket.userId}`);
     });
 });
 
-// --- Avvio del Server ---
-const PORT = process.env.PORT || 10000; // Render usa process.env.PORT
+
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`Server is running on port ${PORT}`);
 });

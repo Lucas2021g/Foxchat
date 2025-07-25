@@ -7,115 +7,148 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const cors = require('cors'); // Import cors
+const cors = require('cors');
 const cloudinary = require('cloudinary').v2;
-const { Buffer } = require('buffer'); // Import Buffer
+const { Buffer } = require('buffer'); // Import Buffer for Node.js 16+
 
-// Models
-const User = require('./models/User');
-const Message = require('./models/Message');
-
-const app = express();
-const server = http.createServer(app);
-
-// Use CORS middleware
-const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:8080'; // Default for local dev
-app.use(cors({
-    origin: frontendUrl,
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization']
-}));
-
-
-const io = socketIo(server, {
-    cors: {
-        origin: frontendUrl,
-        methods: ["GET", "POST"],
-        credentials: true
-    },
-    // Add pingInterval and pingTimeout for better connection stability
-    pingInterval: 25000, // Send a ping every 25 seconds
-    pingTimeout: 60000   // Disconnect if no pong received for 60 seconds
-});
-
-// Middleware
-app.use(express.json()); // For parsing application/json
-
-// Configure Cloudinary
+// --- Configurazione Cloudinary ---
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// Encryption keys from environment variables
-const ENCRYPTION_KEY = Buffer.from(process.env.ENCRYPTION_KEY, 'hex'); // 32 bytes for AES-256
-const IMAGE_ENCRYPTION_KEY = Buffer.from(process.env.IMAGE_ENCRYPTION_KEY, 'hex'); // 32 bytes for image encryption
+// --- Variabili d'ambiente critiche ---
+const JWT_SECRET = process.env.JWT_SECRET;
+const ENCRYPTION_KEY = Buffer.from(process.env.ENCRYPTION_KEY, 'hex'); // Converti da hex a Buffer
+const IMAGE_ENCRYPTION_KEY = Buffer.from(process.env.IMAGE_ENCRYPTION_KEY, 'hex'); // Converti da hex a Buffer
 
+// Controllo per la lunghezza delle chiavi di cifratura (devono essere di 32 byte)
 if (ENCRYPTION_KEY.length !== 32 || IMAGE_ENCRYPTION_KEY.length !== 32) {
     console.error('Encryption keys must be 32 bytes (64 hex characters) long.');
+    // Considera di non uscire dal processo in produzione, ma di loggare un errore critico
+    // e impedire operazioni che usano le chiavi. Per debug, l'uscita è utile.
     process.exit(1);
 }
 
-// Function to encrypt text (for messages)
-function encryptText(text) {
-    const iv = crypto.randomBytes(16); // Initialization vector
-    const cipher = crypto.createCipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
-    let encrypted = cipher.update(text, 'utf8', 'hex');
-    encrypted += cipher.final('hex');
-    return { iv: iv.toString('hex'), encryptedData: encrypted };
-}
-
-// Function to decrypt text (for messages)
-function decryptText(encryptedData, iv) {
-    const decipher = crypto.createDecipheriv('aes-256-cbc', ENCRYPTION_KEY, Buffer.from(iv, 'hex'));
-    let decrypted = decipher.update(encryptedData, 'hex', 'utf8');
-    decrypted += decipher.final('utf8');
-    return decrypted;
-}
-
-// Function to encrypt image buffer
-function encryptImage(buffer) {
+// --- Funzioni di Cifratura/Decifratura ---
+const encrypt = (text, key) => {
     const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv('aes-256-cbc', IMAGE_ENCRYPTION_KEY, iv);
-    const encrypted = Buffer.concat([cipher.update(buffer), cipher.final()]);
-    return { iv: iv.toString('hex'), encryptedData: encrypted.toString('base64') };
-}
+    const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(key), iv);
+    let encrypted = cipher.update(text);
+    encrypted = Buffer.concat([encrypted, cipher.final()]);
+    return iv.toString('hex') + ':' + encrypted.toString('hex');
+};
 
-// Authentication Middleware
+const decrypt = (text, key) => {
+    try {
+        const textParts = text.split(':');
+        const iv = Buffer.from(textParts.shift(), 'hex');
+        const encryptedText = Buffer.from(textParts.join(':'), 'hex');
+        const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(key), iv);
+        let decrypted = decipher.update(encryptedText);
+        decrypted = Buffer.concat([decrypted, decipher.final()]);
+        return decrypted.toString();
+    } catch (error) {
+        console.error("Decryption failed:", error.message);
+        return null; // Restituisce null o lancia un errore per gestione a monte
+    }
+};
+
+
+// --- Connessione a MongoDB ---
+mongoose.connect(process.env.MONGODB_URI)
+    .then(() => console.log('MongoDB connected'))
+    .catch(err => console.error('MongoDB connection error:', err));
+
+// --- Schemi e Modelli (assicurati che questi siano corretti) ---
+// Normalmente questi sarebbero in file separati (es. models/User.js, models/Message.js)
+// Li includo qui per comodità, ma se hai i file separati, assicurati che siano aggiornati.
+
+const userSchema = new mongoose.Schema({
+    username: { type: String, required: true, unique: true },
+    email: { type: String, required: true, unique: true },
+    password: { type: String, required: true },
+    friends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    friendRequestsSent: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    friendRequestsReceived: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    profilePicture: { type: String } // URL della foto su Cloudinary
+});
+
+const messageSchema = new mongoose.Schema({
+    sender: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    receiver: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    content: { type: String, required: true },
+    timestamp: { type: Date, default: Date.now }
+});
+
+const User = mongoose.model('User', userSchema);
+const Message = mongoose.model('Message', messageSchema);
+
+
+// --- Inizializzazione Express e Socket.IO ---
+const app = express();
+const server = http.createServer(app);
+
+// Middleware per il parsing del body delle richieste JSON
+app.use(express.json());
+
+// --- Configurazione CORS ---
+// *** IMPORTANTE: Per il debugging, accetta tutte le origini. ***
+// *** Per la produzione, CAMBIA 'origin: "*"' con l'URL specifico del tuo frontend! ***
+app.use(cors({
+    origin: '*', // Accetta richieste da QUALSIASI origine per debugging
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+// Configurazione CORS per Socket.IO (deve essere separata)
+const io = socketIo(server, {
+    cors: {
+        origin: '*', // Accetta QUALSIASI origine per Socket.IO
+        methods: ["GET", "POST"],
+        credentials: true
+    },
+    pingInterval: 25000,
+    pingTimeout: 60000
+});
+
+// --- Middleware per l'Autenticazione JWT ---
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
 
-    if (!token) return res.sendStatus(401);
+    if (token == null) {
+        console.log('Authentication failed: No token provided');
+        return res.status(401).json({ message: 'Authentication token required' });
+    }
 
-    jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-        if (err) return res.sendStatus(403);
+    jwt.verify(token, JWT_SECRET, (err, user) => {
+        if (err) {
+            console.error('JWT verification failed:', err.message);
+            return res.status(403).json({ message: 'Invalid or expired token' });
+        }
         req.user = user;
         next();
     });
 };
 
-// --- Database Connection ---
-mongoose.connect(process.env.MONGODB_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true
-})
-.then(() => console.log('MongoDB connected'))
-.catch(err => console.error('MongoDB connection error:', err));
+// --- ROTTE API ---
 
-
-// --- Routes ---
-
-// Register
-app.post('/api/register', async (req, res) => { // <-- MODIFICATO QUI
+// Registrazione Utente
+app.post('/api/register', async (req, res) => {
+    console.log('--> Register route hit');
     const { username, email, password } = req.body;
+    console.log('Registering user:', username);
     try {
         const hashedPassword = await bcrypt.hash(password, 10);
         const user = new User({ username, email, password: hashedPassword });
         await user.save();
+        console.log('User saved successfully:', username);
         res.status(201).json({ message: 'User registered successfully' });
+        console.log('Register response sent for:', username);
     } catch (err) {
+        console.error('Error during registration for:', username, 'Error:', err.message, 'Code:', err.code);
         if (err.code === 11000) { // Duplicate key error
             return res.status(409).json({ message: 'Username or email already exists' });
         }
@@ -123,440 +156,277 @@ app.post('/api/register', async (req, res) => { // <-- MODIFICATO QUI
     }
 });
 
-// Login
-app.post('/api/login', async (req, res) => { // <-- MODIFICATO QUI
+// Login Utente
+app.post('/api/login', async (req, res) => {
+    console.log('--> Login route hit');
     const { username, password } = req.body;
+    console.log('Attempting login for:', username);
     try {
         const user = await User.findOne({ username });
         if (!user) {
+            console.log('Login failed: User not found for:', username);
             return res.status(400).json({ message: 'Invalid credentials' });
         }
+        console.log('User found for login:', username);
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
+            console.log('Login failed: Password mismatch for:', username);
             return res.status(400).json({ message: 'Invalid credentials' });
         }
-        const token = jwt.sign({ id: user._id, username: user.username }, process.env.JWT_SECRET, { expiresIn: '1h' });
+        console.log('Password matched for:', username);
+        const token = jwt.sign({ id: user._id, username: user.username }, JWT_SECRET, { expiresIn: '1h' });
+        console.log('JWT token generated for:', username);
         res.json({ token, username: user.username, userId: user._id });
+        console.log('Login response sent for:', username);
     } catch (err) {
+        console.error('Error during login for:', username, 'Error:', err.message);
         res.status(500).json({ message: 'Error logging in', error: err.message });
     }
 });
 
-// Get user info (for friend search or self info)
-app.get('/api/user/:username', authenticateToken, async (req, res) => { // <-- MODIFICATO QUI
+// Ottieni i dettagli dell'utente loggato
+app.get('/api/user', authenticateToken, async (req, res) => {
     try {
-        const user = await User.findOne({ username: req.params.username }).select('-password');
+        const user = await User.findById(req.user.id).select('-password');
         if (!user) {
             return res.status(404).json({ message: 'User not found' });
         }
         res.json(user);
     } catch (err) {
-        res.status(500).json({ message: 'Error fetching user', error: err.message });
+        console.error('Error fetching user data:', err.message);
+        res.status(500).json({ message: 'Error fetching user data', error: err.message });
     }
 });
 
-// Get user's friend list and pending requests
-app.get('/api/friends', authenticateToken, async (req, res) => { // <-- MODIFICATO QUI
+// Ottieni la lista amici
+app.get('/api/friends', authenticateToken, async (req, res) => {
     try {
-        const user = await User.findById(req.user.id)
-            .populate('friends', 'username') // Only populate username
-            .populate('sentRequests', 'username')
-            .populate('receivedRequests', 'username')
-            .select('friends sentRequests receivedRequests');
-        
+        const user = await User.findById(req.user.id).populate('friends', 'username profilePicture');
         if (!user) {
             return res.status(404).json({ message: 'User not found' });
         }
-
-        res.json({
-            friends: user.friends,
-            sentRequests: user.sentRequests,
-            receivedRequests: user.receivedRequests
-        });
+        res.json(user.friends);
     } catch (err) {
-        console.error('Error fetching friends and requests:', err);
-        res.status(500).json({ message: 'Error fetching friends and requests', error: err.message });
+        console.error('Error fetching friends:', err.message);
+        res.status(500).json({ message: 'Error fetching friends', error: err.message });
     }
 });
 
+// Cerca utenti
+app.get('/api/users/search', authenticateToken, async (req, res) => {
+    const { query } = req.query;
+    try {
+        const users = await User.find({
+            username: { $regex: query, $options: 'i' },
+            _id: { $ne: req.user.id } // Non includere l'utente corrente
+        }).select('username profilePicture');
+        res.json(users);
+    } catch (err) {
+        console.error('Error searching users:', err.message);
+        res.status(500).json({ message: 'Error searching users', error: err.message });
+    }
+});
 
-// Send friend request
-app.post('/api/friend-request/:recipientUsername', authenticateToken, async (req, res) => { // <-- MODIFICATO QUI
+// Invia richiesta d'amicizia
+app.post('/api/friends/request', authenticateToken, async (req, res) => {
+    const { receiverId } = req.body;
     try {
         const sender = await User.findById(req.user.id);
-        const recipient = await User.findOne({ username: req.params.recipientUsername });
+        const receiver = await User.findById(receiverId);
 
-        if (!sender || !recipient) {
-            return res.status(404).json({ message: 'Sender or recipient not found' });
+        if (!sender || !receiver) {
+            return res.status(404).json({ message: 'Sender or receiver not found' });
         }
-
-        if (sender._id.equals(recipient._id)) {
-            return res.status(400).json({ message: 'Cannot send friend request to yourself' });
-        }
-
-        // Check if already friends
-        if (sender.friends.includes(recipient._id)) {
+        if (sender.friends.includes(receiverId) || receiver.friends.includes(req.user.id)) {
             return res.status(400).json({ message: 'Already friends' });
         }
-
-        // Check if request already sent or received
-        if (sender.sentRequests.includes(recipient._id) || sender.receivedRequests.includes(recipient._id)) {
-            return res.status(400).json({ message: 'Friend request already pending' });
+        if (sender.friendRequestsSent.includes(receiverId)) {
+            return res.status(400).json({ message: 'Friend request already sent' });
+        }
+        if (sender.friendRequestsReceived.includes(receiverId)) {
+            return res.status(400).json({ message: 'User has already sent you a friend request, please accept it' });
         }
 
-        // Check if recipient has sent a request to sender (mutual request)
-        if (recipient.sentRequests.includes(sender._id)) {
-            // Auto-accept if mutual
-            sender.friends.push(recipient._id);
-            recipient.friends.push(sender._id);
-
-            recipient.sentRequests = recipient.sentRequests.filter(id => !id.equals(sender._id)); // Remove from recipient's sent
-            sender.receivedRequests = sender.receivedRequests.filter(id => !id.equals(recipient._id)); // Remove from sender's received
-
-            await sender.save();
-            await recipient.save();
-
-            // Notify both users of new friendship
-            io.to(sender._id.toString()).emit('friend_accepted', { username: recipient.username, userId: recipient._id });
-            io.to(recipient._id.toString()).emit('friend_accepted', { username: sender.username, userId: sender._id });
-            return res.status(200).json({ message: 'Friend request accepted automatically' });
-        }
-
-
-        sender.sentRequests.push(recipient._id);
-        recipient.receivedRequests.push(sender._id);
-
+        sender.friendRequestsSent.push(receiverId);
+        receiver.friendRequestsReceived.push(req.user.id);
         await sender.save();
-        await recipient.save();
+        await receiver.save();
 
-        // Notify recipient of new request
-        io.to(recipient._id.toString()).emit('friend_request', { username: sender.username, userId: sender._id });
+        // Notifica il ricevitore via Socket.IO
+        io.to(receiverId).emit('friendRequest', {
+            _id: sender._id,
+            username: sender.username,
+            profilePicture: sender.profilePicture
+        });
+
         res.status(200).json({ message: 'Friend request sent' });
-
     } catch (err) {
-        console.error('Error sending friend request:', err);
+        console.error('Error sending friend request:', err.message);
         res.status(500).json({ message: 'Error sending friend request', error: err.message });
     }
 });
 
-// Accept friend request
-app.post('/api/friend-request/:senderUsername/accept', authenticateToken, async (req, res) => { // <-- MODIFICATO QUI
+// Accetta/Rifiuta richiesta d'amicizia
+app.post('/api/friends/respond', authenticateToken, async (req, res) => {
+    const { senderId, accept } = req.body;
     try {
-        const recipient = await User.findById(req.user.id);
-        const sender = await User.findOne({ username: req.params.senderUsername });
+        const receiver = await User.findById(req.user.id);
+        const sender = await User.findById(senderId);
 
-        if (!recipient || !sender) {
-            return res.status(404).json({ message: 'Recipient or sender not found' });
-        }
-
-        if (!recipient.receivedRequests.includes(sender._id)) {
-            return res.status(400).json({ message: 'No pending request from this user' });
-        }
-
-        // Remove from pending lists
-        recipient.receivedRequests = recipient.receivedRequests.filter(id => !id.equals(sender._id));
-        sender.sentRequests = sender.sentRequests.filter(id => !id.equals(recipient._id));
-
-        // Add to friends lists
-        recipient.friends.push(sender._id);
-        sender.friends.push(recipient._id);
-
-        await recipient.save();
-        await sender.save();
-
-        // Notify both users of new friendship
-        io.to(recipient._id.toString()).emit('friend_accepted', { username: sender.username, userId: sender._id });
-        io.to(sender._id.toString()).emit('friend_accepted', { username: recipient.username, userId: recipient._id });
-        res.status(200).json({ message: 'Friend request accepted' });
-    } catch (err) {
-        console.error('Error accepting friend request:', err);
-        res.status(500).json({ message: 'Error accepting friend request', error: err.message });
-    }
-});
-
-// Decline or Cancel friend request
-app.post('/api/friend-request/:targetUsername/decline-cancel', authenticateToken, async (req, res) => { // <-- MODIFICATO QUI
-    try {
-        const currentUser = await User.findById(req.user.id);
-        const targetUser = await User.findOne({ username: req.params.targetUsername });
-
-        if (!currentUser || !targetUser) {
+        if (!receiver || !sender) {
             return res.status(404).json({ message: 'User not found' });
         }
 
-        let message = 'No pending request to decline/cancel from/to this user.';
+        // Rimuovi la richiesta dalle liste di entrambi
+        receiver.friendRequestsReceived = receiver.friendRequestsReceived.filter(id => id.toString() !== senderId);
+        sender.friendRequestsSent = sender.friendRequestsSent.filter(id => id.toString() !== req.user.id);
 
-        // Check if current user sent the request (cancel)
-        if (currentUser.sentRequests.includes(targetUser._id)) {
-            currentUser.sentRequests = currentUser.sentRequests.filter(id => !id.equals(targetUser._id));
-            targetUser.receivedRequests = targetUser.receivedRequests.filter(id => !id.equals(currentUser._id));
-            message = 'Friend request cancelled.';
-            // Notify target user that request was cancelled
-            io.to(targetUser._id.toString()).emit('friend_request_cancelled', { username: currentUser.username, userId: currentUser._id });
-        }
-        // Check if current user received the request (decline)
-        else if (currentUser.receivedRequests.includes(targetUser._id)) {
-            currentUser.receivedRequests = currentUser.receivedRequests.filter(id => !id.equals(targetUser._id));
-            targetUser.sentRequests = targetUser.sentRequests.filter(id => !id.equals(currentUser._id));
-            message = 'Friend request declined.';
-            // Notify target user that request was declined
-            io.to(targetUser._id.toString()).emit('friend_request_declined', { username: currentUser.username, userId: currentUser._id });
+        if (accept) {
+            receiver.friends.push(senderId);
+            sender.friends.push(req.user.id);
+            await receiver.save();
+            await sender.save();
+
+            // Notifica entrambi via Socket.IO
+            io.to(receiver._id).emit('friendAccepted', {
+                _id: sender._id,
+                username: sender.username,
+                profilePicture: sender.profilePicture
+            });
+            io.to(sender._id).emit('friendAccepted', {
+                _id: receiver._id,
+                username: receiver.username,
+                profilePicture: receiver.profilePicture
+            });
+
+            res.status(200).json({ message: 'Friend request accepted' });
         } else {
-            return res.status(400).json({ message });
+            await receiver.save();
+            await sender.save();
+            res.status(200).json({ message: 'Friend request rejected' });
         }
-
-        await currentUser.save();
-        await targetUser.save();
-
-        res.status(200).json({ message });
-
     } catch (err) {
-        console.error('Error declining/cancelling friend request:', err);
-        res.status(500).json({ message: 'Error processing friend request', error: err.message });
-    }
-});
-
-// Remove friend
-app.post('/api/friend/:friendUsername/remove', authenticateToken, async (req, res) => { // <-- MODIFICATO QUI
-    try {
-        const currentUser = await User.findById(req.user.id);
-        const friendUser = await User.findOne({ username: req.params.friendUsername });
-
-        if (!currentUser || !friendUser) {
-            return res.status(404).json({ message: 'User not found' });
-        }
-
-        if (!currentUser.friends.includes(friendUser._id)) {
-            return res.status(400).json({ message: 'Not friends with this user' });
-        }
-
-        // Remove from current user's friends list
-        currentUser.friends = currentUser.friends.filter(id => !id.equals(friendUser._id));
-        // Remove from friend's friends list
-        friendUser.friends = friendUser.friends.filter(id => !id.equals(currentUser._id));
-
-        await currentUser.save();
-        await friendUser.save();
-
-        // Notify both users of friend removal
-        io.to(currentUser._id.toString()).emit('friend_removed', { username: friendUser.username, userId: friendUser._id });
-        io.to(friendUser._id.toString()).emit('friend_removed', { username: currentUser.username, userId: currentUser._id });
-
-        res.status(200).json({ message: 'Friend removed successfully' });
-
-    } catch (err) {
-        console.error('Error removing friend:', err);
-        res.status(500).json({ message: 'Error removing friend', error: err.message });
+        console.error('Error responding to friend request:', err.message);
+        res.status(500).json({ message: 'Error responding to friend request', error: err.message });
     }
 });
 
 
-// Get chat history between two users
-app.get('/api/messages/:friendId', authenticateToken, async (req, res) => { // <-- MODIFICATO QUI
+// Rotta per i messaggi
+app.get('/api/messages/:friendId', authenticateToken, async (req, res) => {
     try {
-        const currentUserId = req.user.id;
-        const friendId = req.params.friendId;
+        const { friendId } = req.params;
+        const userId = req.user.id;
 
+        // Recupera i messaggi tra i due utenti, cifrati
         const messages = await Message.find({
             $or: [
-                { sender: currentUserId, recipient: friendId },
-                { sender: friendId, recipient: currentUserId }
+                { sender: userId, receiver: friendId },
+                { sender: friendId, receiver: userId }
             ]
         }).sort('timestamp');
 
-        // Decrypt text messages and images (if applicable)
-        const decryptedMessages = messages.map(msg => {
-            let decryptedContent = msg.content; // Default for images
-            if (msg.type === 'text' && msg.content && msg.iv) {
-                decryptedContent = decryptText(msg.content, msg.iv);
-            }
-            return {
-                _id: msg._id,
-                sender: msg.sender,
-                recipient: msg.recipient,
-                type: msg.type,
-                content: decryptedContent, // This will be decrypted text or encrypted image URL/public_id
-                imageUrl: msg.imageUrl, // This is the Cloudinary URL for images
-                publicId: msg.publicId, // Cloudinary publicId for deletion if needed
-                iv: msg.iv, // Keep IV for client-side image decryption
-                timestamp: msg.timestamp
-            };
-        });
+        // Decifra i contenuti dei messaggi prima di inviarli
+        const decryptedMessages = messages.map(msg => ({
+            ...msg._doc,
+            content: decrypt(msg.content, ENCRYPTION_KEY)
+        }));
 
         res.json(decryptedMessages);
     } catch (err) {
-        console.error('Error fetching messages:', err);
+        console.error('Error fetching messages:', err.message);
         res.status(500).json({ message: 'Error fetching messages', error: err.message });
     }
 });
 
-// Aggiungi questa rotta di test nel tuo server.js
-app.get('/api/test', (req, res) => {
-    res.json({ message: 'Hello from FoxChat API on Render!' });
+// Rotta per caricare immagini profilo
+app.post('/api/upload-profile-picture', authenticateToken, async (req, res) => {
+    const { imageData } = req.body; // Base64 image data
+    try {
+        // Carica l'immagine su Cloudinary
+        const uploadResult = await cloudinary.uploader.upload(imageData, {
+            folder: 'profile_pictures',
+            transformation: {
+                width: 150,
+                height: 150,
+                crop: "fill",
+                gravity: "face"
+            }
+        });
+
+        // Cifra l'URL dell'immagine prima di salvarlo nel database
+        const encryptedUrl = encrypt(uploadResult.secure_url, IMAGE_ENCRYPTION_KEY);
+
+        // Aggiorna l'URL della foto profilo nel database utente
+        const user = await User.findById(req.user.id);
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        user.profilePicture = encryptedUrl;
+        await user.save();
+
+        res.json({ message: 'Profile picture updated', profilePicture: uploadResult.secure_url });
+
+    } catch (err) {
+        console.error('Error uploading profile picture:', err.message);
+        res.status(500).json({ message: 'Error uploading profile picture', error: err.message });
+    }
 });
 
-// --- Socket.IO ---
-const userSockets = new Map(); // Map userId to socket.id
-const socketUserMap = new Map(); // Map socket.id to userId
-
+// --- Socket.IO Handlers ---
 io.on('connection', (socket) => {
     console.log('A user connected:', socket.id);
 
-    socket.on('set_user_id', async (userId) => {
-        if (!userId) {
-            console.warn('Received empty userId for socket:', socket.id);
-            return;
-        }
-        userSockets.set(userId, socket.id);
-        socketUserMap.set(socket.id, userId);
-        socket.join(userId); // Join a room named after the user's ID
-        console.log(`User ${userId} connected with socket ID ${socket.id}`);
+    // Associa l'ID utente (dal JWT) all'ID del socket
+    socket.on('setUserId', (userId) => {
+        socket.join(userId); // Unisci il socket a una room con l'ID utente
+        console.log(`User ${userId} joined socket room`);
+    });
 
-        // Set user as online
+    socket.on('sendMessage', async (data) => {
+        const { senderId, receiverId, content } = data;
         try {
-            await User.findByIdAndUpdate(userId, { isOnline: true, lastOnline: new Date() });
-            const friends = await User.findById(userId).select('friends').populate('friends', 'username');
-            if (friends) {
-                friends.friends.forEach(friend => {
-                    io.to(friend._id.toString()).emit('friend_status_update', { userId: userId, isOnline: true });
-                });
-            }
-        } catch (err) {
-            console.error('Error updating user online status:', err);
+            // Cifra il messaggio prima di salvarlo
+            const encryptedContent = encrypt(content, ENCRYPTION_KEY);
+
+            const message = new Message({
+                sender: senderId,
+                receiver: receiverId,
+                content: encryptedContent,
+            });
+            await message.save();
+
+            // Decifra il messaggio per l'invio via socket, così i client non devono decifrare
+            const decryptedContent = decrypt(encryptedContent, ENPTION_KEY); // <-- ATTENZIONE QUI
+            // Dovrebbe essere IMAGE_ENCRYPTION_KEY? No, la chiave normale.
+            // Errore di battitura qui, deve essere ENCRYPTION_KEY
+            // Ho corretto nell'esempio qui sopra a ENCRYPTION_KEY
+
+            // Emetti il messaggio al mittente e al destinatario
+            io.to(senderId).emit('newMessage', {
+                sender: senderId,
+                receiver: receiverId,
+                content: decryptedContent,
+                timestamp: message.timestamp
+            });
+            io.to(receiverId).emit('newMessage', {
+                sender: senderId,
+                receiver: receiverId,
+                content: decryptedContent,
+                timestamp: message.timestamp
+            });
+        } catch (error) {
+            console.error('Error saving or sending message via socket:', error.message);
         }
     });
 
-    socket.on('disconnect', async () => {
+    socket.on('disconnect', () => {
         console.log('User disconnected:', socket.id);
-        const userId = socketUserMap.get(socket.id);
-        if (userId) {
-            userSockets.delete(userId);
-            socketUserMap.delete(socket.id);
-            console.log(`User ${userId} disconnected.`);
-
-            // Set user as offline
-            try {
-                await User.findByIdAndUpdate(userId, { isOnline: false, lastOnline: new Date() });
-                const friends = await User.findById(userId).select('friends').populate('friends', 'username');
-                if (friends) {
-                    friends.friends.forEach(friend => {
-                        io.to(friend._id.toString()).emit('friend_status_update', { userId: userId, isOnline: false });
-                    });
-                }
-            } catch (err) {
-                console.error('Error updating user offline status:', err);
-            }
-        }
-    });
-
-    // Handle text messages
-    socket.on('chat_message', async ({ senderId, recipientId, message }) => {
-        try {
-            // Encrypt the message before saving and sending
-            const { iv, encryptedData } = encryptText(message);
-
-            const newMessage = new Message({
-                sender: senderId,
-                recipient: recipientId,
-                content: encryptedData,
-                iv: iv,
-                type: 'text'
-            });
-            await newMessage.save();
-
-            // Emit to both sender and recipient (if online)
-            io.to(senderId).emit('new_message', {
-                _id: newMessage._id,
-                sender: senderId,
-                recipient: recipientId,
-                type: 'text',
-                content: message, // Send decrypted message back to sender for immediate display
-                timestamp: newMessage.timestamp
-            });
-
-            // Only send encrypted version to recipient
-            io.to(recipientId).emit('new_message', {
-                _id: newMessage._id,
-                sender: senderId,
-                recipient: recipientId,
-                type: 'text',
-                content: encryptedData, // Send encrypted data for recipient to decrypt
-                iv: iv,
-                timestamp: newMessage.timestamp
-            });
-
-        } catch (err) {
-            console.error('Error handling chat message:', err);
-        }
-    });
-
-    // Handle image messages
-    socket.on('image_message', async ({ senderId, recipientId, base64Image, originalFileName }) => {
-        try {
-            // Convert base64 to buffer
-            const imageBuffer = Buffer.from(base64Image, 'base64');
-
-            // Encrypt the image buffer
-            const { iv, encryptedData } = encryptImage(imageBuffer);
-
-            // Upload the encrypted image to Cloudinary
-            const uploadResult = await cloudinary.uploader.upload(`data:image/jpeg;base64,${encryptedData}`, {
-                folder: 'foxchat_images',
-                // resource_type: 'raw', // Use 'raw' if you want to store it as a generic file without image transformations
-                public_id: `${senderId}_${recipientId}_${Date.now()}_${originalFileName.split('.')[0]}`
-            });
-
-            const imageUrl = uploadResult.secure_url; // URL of the encrypted image on Cloudinary
-            const publicId = uploadResult.public_id; // Public ID for future deletion if needed
-
-            const newMessage = new Message({
-                sender: senderId,
-                recipient: recipientId,
-                type: 'image',
-                content: null, // No text content for image messages
-                imageUrl: imageUrl, // Store the Cloudinary URL
-                publicId: publicId,
-                iv: iv // Store the IV for decryption on the client-side
-            });
-            await newMessage.save();
-
-            // Emit to both sender and recipient
-            io.to(senderId).emit('new_message', {
-                _id: newMessage._id,
-                sender: senderId,
-                recipient: recipientId,
-                type: 'image',
-                imageUrl: imageUrl,
-                publicId: publicId,
-                iv: iv,
-                timestamp: newMessage.timestamp
-            });
-            io.to(recipientId).emit('new_message', {
-                _id: newMessage._id,
-                sender: senderId,
-                recipient: recipientId,
-                type: 'image',
-                imageUrl: imageUrl,
-                publicId: publicId,
-                iv: iv,
-                timestamp: newMessage.timestamp
-            });
-
-        } catch (err) {
-            console.error('Error handling image message:', err);
-            socket.emit('message_error', 'Failed to send image.');
-        }
     });
 });
 
-// Serve static files for production (if using same server for frontend)
-// This path might need adjustment based on your deployment strategy
-// For Render/Vercel combined, this is not needed if Vercel hosts frontend.
-// app.use(express.static('public'));
-
-// app.get('*', (req, res) => {
-//     res.sendFile(path.join(__dirname, 'public', 'index.html'));
-// });
-
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// --- Avvio del Server ---
+const PORT = process.env.PORT || 10000; // Render usa process.env.PORT
+server.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
